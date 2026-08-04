@@ -1,0 +1,68 @@
+import type { CatalogEntry, ResourceRequest, ApiErrorBody } from '@/lib/types'
+
+// Same-origin default lets the UI be reverse-proxied alongside the broker;
+// override for local dev against `make broker-run` (see .env.example).
+const BASE_URL = import.meta.env.VITE_BROKER_URL ?? ''
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+async function request<T>(apiKey: string, path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE_URL}/api${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  })
+
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      const body = (await res.json()) as ApiErrorBody
+      if (body.error) message = body.error
+    } catch {
+      // body wasn't JSON - fall back to statusText
+    }
+    throw new ApiError(res.status, message)
+  }
+
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+export const api = {
+  listPromises: (apiKey: string, all = false) =>
+    request<CatalogEntry[]>(apiKey, `/promises${all ? '?all=true' : ''}`),
+
+  getPromise: (apiKey: string, name: string) =>
+    request<CatalogEntry>(apiKey, `/promises/${encodeURIComponent(name)}`),
+
+  submitRequest: (apiKey: string, promiseName: string, name: string, spec: Record<string, unknown>) =>
+    request<ResourceRequest>(apiKey, `/promises/${encodeURIComponent(promiseName)}/requests`, {
+      method: 'POST',
+      body: JSON.stringify({ name, spec }),
+    }),
+
+  listRequests: (apiKey: string, promiseName: string) =>
+    request<ResourceRequest[]>(apiKey, `/promises/${encodeURIComponent(promiseName)}/requests`),
+
+  getRequest: (apiKey: string, promiseName: string, reqName: string) =>
+    request<ResourceRequest>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
+    ),
+
+  deleteRequest: (apiKey: string, promiseName: string, reqName: string) =>
+    request<void>(apiKey, `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`, {
+      method: 'DELETE',
+    }),
+}

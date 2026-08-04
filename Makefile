@@ -241,6 +241,24 @@ broker-run: ## Run the marketplace broker against the platform cluster (localhos
 broker-test: ## Run the broker's Go tests
 	cd broker && go test ./...
 
+##@ Marketplace UI
+
+.PHONY: ui-install
+ui-install: ## Install the UI's npm dependencies
+	cd ui && npm install
+
+.PHONY: ui-dev
+ui-dev: ## Run the marketplace UI dev server (localhost:5173) against `make broker-run`
+	cd ui && npm run dev
+
+.PHONY: ui-mock
+ui-mock: ## Run the UI's mock broker (localhost:8080) - no cluster needed, for UI-only work
+	cd ui && npm run mock-broker
+
+.PHONY: ui-build
+ui-build: ## Type-check and production-build the UI
+	cd ui && npm run build
+
 ##@ Day-2 visibility
 
 .PHONY: metrics-server

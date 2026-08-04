@@ -126,12 +126,31 @@ charset - too restrictive for a real name or sentence.
 [`promises/database/promise.yaml`](promises/database/promise.yaml) carries
 all three as the reference example.
 
+## Marketplace UI
+
+`ui/` is a [shadcn/ui](https://ui.shadcn.com) frontend (Vite + React +
+TypeScript) for the broker: sign in with a team's API key, browse the
+catalog, submit requests through a form generated from each Promise's
+schema, and track their status.
+
+```bash
+make ui-install   # once
+make broker-run   # in one terminal
+make ui-dev        # in another - opens on localhost:5173
+```
+
+No live cluster? `make ui-mock` runs a dependency-free mock of the broker
+(same routes, same auth, an in-memory store) so the UI can be developed and
+demoed on its own. See [ui/README.md](ui/README.md) for details.
+
 ## Other targets
 
 ```bash
 make broker-run          # run the marketplace broker API against kind-platform
 make broker-build        # build the broker binary (bin/broker)
 make broker-test         # run the broker's Go tests
+make ui-dev               # run the marketplace UI dev server
+make ui-mock               # run the UI's mock broker (no cluster needed)
 make status             # pod/destination health on both clusters
 make top                 # CPU/memory per pod on both clusters
 make logs-platform       # tail the Kratix controller
