@@ -65,10 +65,24 @@ later is a one-object change - `clusters/platform/`'s contents don't need to mov
 
 This is additive, not yet wired into `make up`: cert-manager is still installed
 imperatively by the `cert-manager` target before Flux exists on the platform cluster (Flux
-itself comes from `kratix-platform`'s prerequisites, later in the sequence), so `make infra`
-is something you run *after* `make up` to have Flux take over an already-running
-cert-manager. Folding this into `up` so a fresh cluster is GitOps-managed from the start
-would mean bootstrapping Flux before cert-manager instead of after - not done here yet.
+itself is installed later, by `kratix-platform-destination`'s `flux-platform` prerequisite),
+so `make infra` is something you run *after* `make up` to have Flux take over an
+already-running cert-manager. Folding this into `up` so a fresh cluster is GitOps-managed
+from the start would mean bootstrapping Flux before cert-manager instead of after - not
+done here yet.
+
+**Running `make infra` against a cluster that still has the imperative cert-manager doesn't
+cleanly replace it** - the upstream release manifest and the Helm chart name their
+resources differently (`cert-manager-*` vs `cert-manager-cert-manager-*`), so Helm doesn't
+see a conflict and you end up with two full cert-manager installs (two sets of webhooks)
+running side by side. To hand off cleanly, remove the imperative one first - but *not* via
+`kubectl delete -f <the release manifest>`: that manifest also owns the `cert-manager`
+Namespace object, so deleting it deletes the whole namespace, including whatever Flux
+already put there. Delete the old Deployments/Services/webhook configs by name instead, or
+accept the brief gap and let the `HelmRelease`'s `install.createNamespace: true` recreate
+the namespace (`kubectl annotate helmrelease cert-manager -n flux-system
+reconcile.fluxcd.io/requestedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite` to force an
+immediate retry rather than waiting for the next interval).
 
 ## Building a Promise
 
