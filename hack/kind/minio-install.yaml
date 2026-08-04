@@ -1,11 +1,13 @@
 # Ephemeral, single-pod MinIO for local dev - not for production use.
 # Vendored (not fetched at apply-time) from:
 # https://github.com/syntasso/kratix/blob/main/config/samples/minio-install.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: kratix-platform-system
----
+#
+# The kratix-platform-system Namespace and the default/minio-credentials
+# Secret are deliberately NOT declared here - the Kratix Helm chart already
+# owns both (the namespace as where its controller-manager runs, the secret
+# via platform-values.yaml's additionalResources), and Helm refuses to adopt
+# resources it didn't create. The `minio` Makefile target now runs after
+# `kratix-platform` so both exist by the time this file is applied.
 apiVersion: v1
 kind: Service
 metadata:
@@ -56,15 +58,6 @@ spec:
       volumes:
         - name: data-volume
           emptyDir: {}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: minio-credentials
-  namespace: default
-stringData:
-  accessKeyID: minioadmin
-  secretAccessKey: minioadmin
 ---
 apiVersion: batch/v1
 kind: Job

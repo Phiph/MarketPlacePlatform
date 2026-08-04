@@ -28,6 +28,15 @@ KIND_NODE_IMAGE      ?= kindest/node:v1.33.1
 CERT_MANAGER_VERSION ?= v1.15.0
 KRATIX_HELM_REPO     := https://syntasso.github.io/helm-charts
 
+# Newest Flux release that still serves the Bucket/Kustomization v1beta1 API
+# the (deprecated) syntasso/kratix-destination chart hardcodes for Destination
+# delivery - v2.7.0 dropped v1beta1 for Bucket. v2.6.4 still serves v1 too, so
+# our own manifests (clusters/platform/, hack/kratix/platform-infra-source.yaml)
+# use the current stable APIs; only the chart's own objects are stuck on the
+# old one. Re-check this pin (`flux install --version=vX --export`, inspect
+# the CRD's spec.versions) before bumping past v2.6.x.
+FLUX_VERSION ?= v2.6.4
+
 REGISTRY_NAME := kind-registry
 REGISTRY_PORT := 5001
 
@@ -37,6 +46,10 @@ KRATIX_CLI_OS       = $(shell uname -s)
 KRATIX_CLI_ARCH      = $(shell uname -m)
 
 PROMISE_DIR ?= promises/database
+
+INFRA_DIR      ?= clusters/platform
+INFRA_ARTIFACT  = platform-infra
+INFRA_TAG      := $(shell date +%Y%m%d%H%M%S)
 
 .DEFAULT_GOAL := help
 
@@ -56,6 +69,7 @@ deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s
 	@command -v yq      >/dev/null || brew install yq
 	@command -v k9s     >/dev/null || brew install k9s
 	@command -v go      >/dev/null || brew install go
+	@command -v flux    >/dev/null || brew install fluxcd/tap/flux
 	@$(MAKE) --no-print-directory $(KRATIX_CLI)
 
 .PHONY: up
@@ -63,8 +77,8 @@ up: deps registry-start ## Create both clusters and install Kratix via Helm (ide
 	$(MAKE) --no-print-directory clusters
 	$(MAKE) --no-print-directory registry-configure
 	$(MAKE) --no-print-directory cert-manager
-	$(MAKE) --no-print-directory minio
 	$(MAKE) --no-print-directory kratix-platform
+	$(MAKE) --no-print-directory minio
 	$(MAKE) --no-print-directory kratix-worker
 	$(MAKE) --no-print-directory kratix-platform-destination
 	$(MAKE) --no-print-directory metrics-server
@@ -97,11 +111,29 @@ kratix-platform: ## Install Kratix on the platform cluster (Helm chart: syntasso
 	helm --kube-context $(PLATFORM_CTX) upgrade --install kratix kratix \
 		--repo $(KRATIX_HELM_REPO) -f hack/kratix/platform-values.yaml --wait --timeout 5m
 
+FLUX_INSTALL_URL := https://github.com/fluxcd/flux2/releases/download/$(FLUX_VERSION)/install.yaml
+FLUX_DEPLOYMENTS := deployment/source-controller deployment/kustomize-controller deployment/helm-controller
+
+# kubectl apply of the pinned release manifest, not `flux install --version=`:
+# the flux CLI refuses to install a version it considers too far from its own
+# (brew tracks latest, so this errors as soon as the two drift).
+
+.PHONY: flux-worker
+flux-worker: ## Install Flux on the worker cluster, pinned to $(FLUX_VERSION) (see the pin comment above)
+	kubectl --context $(WORKER_CTX) apply -f $(FLUX_INSTALL_URL)
+	kubectl --context $(WORKER_CTX) wait --for=condition=available --timeout=120s -n flux-system $(FLUX_DEPLOYMENTS)
+
+.PHONY: flux-platform
+flux-platform: ## Install Flux on the platform cluster, pinned to $(FLUX_VERSION) (see the pin comment above)
+	kubectl --context $(PLATFORM_CTX) apply -f $(FLUX_INSTALL_URL)
+	kubectl --context $(PLATFORM_CTX) wait --for=condition=available --timeout=120s -n flux-system $(FLUX_DEPLOYMENTS)
+
 .PHONY: kratix-worker
-kratix-worker: ## Register the worker cluster as a Destination (Helm chart: syntasso/kratix-destination, installs Flux)
+kratix-worker: flux-worker ## Register the worker cluster as a Destination (Helm chart: syntasso/kratix-destination)
 	@platform_ip=$$(docker inspect -f '{{ (index .NetworkSettings.Networks "kind").IPAddress }}' $(PLATFORM_CLUSTER)-control-plane); \
 	helm --kube-context $(WORKER_CTX) upgrade --install kratix-destination kratix-destination \
 		--repo $(KRATIX_HELM_REPO) \
+		--set installFlux=false \
 		--set config.path=worker-1 \
 		--set config.namespace=flux-system \
 		--set config.secretRef.name=minio-credentials \
@@ -114,9 +146,10 @@ kratix-worker: ## Register the worker cluster as a Destination (Helm chart: synt
 	kubectl --context $(PLATFORM_CTX) wait destination worker-1 --for=condition=Ready --timeout=300s
 
 .PHONY: kratix-platform-destination
-kratix-platform-destination: ## Register the platform cluster itself as a Destination (installs a second Flux, on kind-platform)
+kratix-platform-destination: flux-platform ## Register the platform cluster itself as a Destination (Helm chart: syntasso/kratix-destination)
 	helm --kube-context $(PLATFORM_CTX) upgrade --install kratix-destination kratix-destination \
 		--repo $(KRATIX_HELM_REPO) \
+		--set installFlux=false \
 		--set config.path=platform-cluster \
 		--set config.namespace=flux-system \
 		--set config.secretRef.name=minio-credentials \
@@ -186,6 +219,38 @@ registry: registry-start registry-configure ## Ensure the local registry is runn
 .PHONY: registry-stop
 registry-stop: ## Stop and remove the local registry container
 	@docker rm -f $(REGISTRY_NAME) >/dev/null 2>&1 || true
+
+##@ Platform infra (Flux/GitOps prototype)
+#
+# $(INFRA_DIR) is reconciled onto the platform cluster by the same Flux
+# `flux-platform` installs (pinned to $(FLUX_VERSION) - see that var's
+# comment above for why not literal-latest). Not a second Flux instance:
+# kratix-destination's chart runs with installFlux=false and just registers
+# the Destination against this one.
+#
+# `infra-push` bundles the folder as an OCI artifact in the local registry
+# (no git remote needed for local dev); `infra-apply` points Flux at it.
+# Applied with kubectl rather than `flux create`, so it's easy to diff/review
+# as a file - not because of any API version mismatch (our own manifests use
+# the current v1/v2 APIs; only kratix-destination's own objects are stuck on
+# the old v1beta1 one). Swapping the OCIRepository for a GitRepository
+# against a real git remote later is a one-object change - $(INFRA_DIR)'s
+# contents don't need to move.
+
+.PHONY: infra-push
+infra-push: ## Push $(INFRA_DIR) as an OCI artifact to the local registry
+	@command -v flux >/dev/null || { echo "flux CLI is required: brew install fluxcd/tap/flux"; exit 1; }
+	flux push artifact oci://localhost:$(REGISTRY_PORT)/$(INFRA_ARTIFACT):$(INFRA_TAG) \
+		--path=$(INFRA_DIR) --source="local dev" --revision="$(INFRA_TAG)"
+
+.PHONY: infra-apply
+infra-apply: ## Point the platform cluster's Flux at the pushed artifact (idempotent)
+	kubectl --context $(PLATFORM_CTX) apply -f hack/kratix/platform-infra-source.yaml
+	kubectl --context $(PLATFORM_CTX) patch ocirepository $(INFRA_ARTIFACT) -n flux-system \
+		--type merge -p '{"spec":{"ref":{"tag":"$(INFRA_TAG)"}}}'
+
+.PHONY: infra
+infra: infra-push infra-apply ## Push $(INFRA_DIR) and reconcile it onto the platform cluster
 
 ##@ Promises
 

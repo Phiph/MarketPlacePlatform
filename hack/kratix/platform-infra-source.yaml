@@ -1,0 +1,31 @@
+# Points the platform cluster's Flux (installed by the `flux-platform`
+# Makefile target, pinned to $(FLUX_VERSION)) at $(INFRA_DIR)
+# (clusters/platform/), bundled as an OCI artifact in the local registry by
+# `make infra-push`. `make infra-apply` applies this file, then patches the
+# OCIRepository's tag to whatever infra-push just pushed.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: platform-infra
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: oci://kind-registry:5000/platform-infra
+  ref:
+    tag: init
+  insecure: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform-infra
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: OCIRepository
+    name: platform-infra
+  path: "./"
+  prune: true
+  wait: true
+  timeout: 3m

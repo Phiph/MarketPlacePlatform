@@ -1,0 +1,11 @@
+# Chart source for cert-manager-release.yaml. Same chart the Makefile's old
+# `cert-manager` target fetched as a raw release manifest from GitHub; here
+# it's a HelmRepository so helm-controller can track it.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: jetstack
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://charts.jetstack.io
