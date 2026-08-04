@@ -4,6 +4,10 @@ metadata:
   creationTimestamp: null
   labels:
     kratix.io/promise-version: v0.0.1
+    marketplace.kratix.io/visible: "true"
+  annotations:
+    marketplace.kratix.io/display-name: Postgres Database
+    marketplace.kratix.io/description: A sized, managed Postgres database, provisioned on request.
   name: database
 spec:
   api:

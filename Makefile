@@ -47,7 +47,7 @@ help: ## Show available targets
 ##@ Cluster lifecycle
 
 .PHONY: deps
-deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s) and fetch the kratix CLI
+deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s, go) and fetch the kratix CLI
 	@command -v docker >/dev/null || { echo "Docker is required: https://www.docker.com/products/docker-desktop"; exit 1; }
 	@docker info >/dev/null 2>&1 || { echo "Docker is installed but the daemon isn't running"; exit 1; }
 	@command -v kind    >/dev/null || brew install kind
@@ -55,6 +55,7 @@ deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s
 	@command -v helm    >/dev/null || brew install helm
 	@command -v yq      >/dev/null || brew install yq
 	@command -v k9s     >/dev/null || brew install k9s
+	@command -v go      >/dev/null || brew install go
 	@$(MAKE) --no-print-directory $(KRATIX_CLI)
 
 .PHONY: up
@@ -225,6 +226,20 @@ promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_D
 	@echo ""
 	@echo "Watch the request:  kubectl --context $(PLATFORM_CTX) get databases.demo.kratix.io example-database -w"
 	@echo "Watch the worker:   kubectl --context $(WORKER_CTX) get pods -w"
+
+##@ Broker API
+
+.PHONY: broker-build
+broker-build: ## Build the marketplace broker binary (bin/broker)
+	cd broker && go build -o ../bin/broker ./cmd/broker
+
+.PHONY: broker-run
+broker-run: ## Run the marketplace broker against the platform cluster (localhost:8080, or $BROKER_ADDR)
+	cd broker && BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) go run ./cmd/broker
+
+.PHONY: broker-test
+broker-test: ## Run the broker's Go tests
+	cd broker && go test ./...
 
 ##@ Day-2 visibility
 

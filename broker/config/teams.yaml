@@ -1,0 +1,8 @@
+# DEMO-ONLY auth: a static map of team name -> API key. Callers authenticate
+# with `Authorization: Bearer <key>`, and the broker treats them as that team
+# for the rest of the request (namespace-per-team isolation, see
+# internal/tenant). There is no real authn here (no OIDC/SSO, no rotation,
+# keys in plaintext) - fine for a local kind cluster, not a real platform.
+teams:
+  team-payments: demo-key-payments
+  team-checkout: demo-key-checkout

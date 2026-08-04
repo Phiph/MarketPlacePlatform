@@ -61,9 +61,77 @@ Promise from scratch with `bin/kratix init promise`.
   cluster. For those, use the local registry: `docker build -t localhost:5001/<name>:<tag> .`, then
   `docker push localhost:5001/<name>:<tag>`, and reference that same tag in the manifest your pipeline emits.
 
+## Marketplace broker API
+
+Kubernetes/Kratix is the supply side - Promises, and the CRDs/workflows they
+define. The **broker** (`broker/`, a small Go service) is the beginning of
+the demand side: a multi-tenant HTTP facade in front of the platform cluster,
+so a future marketplace UI (or anything else) has a friendly contract to
+build against instead of talking to `kubectl`/the Kubernetes API directly.
+
+```bash
+make up            # if you haven't already
+make promise-demo   # installs the database Promise, so there's something to browse
+make broker-run      # starts the broker on :8080, talking to kind-platform
+```
+
+**Multi-tenancy**: callers are "teams". Each team gets its own namespace
+(`team-<name>`) that its requests live in - one team can't see or touch
+another's. Auth is a **static demo-only** API-key -> team mapping
+(`broker/config/teams.yaml`; ships with `team-payments` / `demo-key-payments`
+and `team-checkout` / `demo-key-checkout`) - there's no real authn (no OIDC/
+SSO), which is fine for a local kind cluster but is the first thing to
+replace before this becomes anything but a demo.
+
+**Endpoints** (all under `/api`, all requiring `Authorization: Bearer <key>`
+except `/healthz`):
+
+| Method | Path | What |
+|---|---|---|
+| GET | `/healthz` | Liveness, no auth |
+| GET | `/api/promises` | List catalog-visible Promises (add `?all=true` to see hidden ones too) |
+| GET | `/api/promises/{name}` | One Promise's full entry, including its request schema |
+| POST | `/api/promises/{name}/requests` | Submit a request: `{"name": "...", "spec": {...}}` |
+| GET | `/api/promises/{name}/requests` | List the calling team's requests against this Promise |
+| GET | `/api/promises/{name}/requests/{reqName}` | One request's current status |
+| DELETE | `/api/promises/{name}/requests/{reqName}` | Delete a request |
+
+```bash
+curl -H "Authorization: Bearer demo-key-payments" localhost:8080/api/promises
+
+curl -X POST -H "Authorization: Bearer demo-key-payments" \
+  -d '{"name":"my-db","spec":{"size":"1Gi"}}' \
+  localhost:8080/api/promises/database/requests
+
+curl -H "Authorization: Bearer demo-key-payments" localhost:8080/api/promises/database/requests
+```
+
+### Marketplace metadata convention
+
+A Promise doesn't show up in the catalog just by being installed - the
+Promise author opts it in (and describes it) with labels/annotations on the
+`Promise` object itself, all under the `marketplace.kratix.io/` prefix:
+
+| Key | Kind | Purpose |
+|---|---|---|
+| `marketplace.kratix.io/visible` | label | `"true"` to list it in `GET /api/promises`. **Default is hidden** if absent - installing a Promise never silently publishes it. |
+| `marketplace.kratix.io/display-name` | annotation | Human-readable name shown in the catalog. Falls back to the Promise's `metadata.name` if absent. |
+| `marketplace.kratix.io/description` | annotation | Free-text description. Omitted from the entry if absent. |
+
+Visibility is a **label**, not an annotation, specifically so the broker can
+filter with a Kubernetes `LabelSelector` at list time rather than fetching
+every Promise and filtering after the fact. Display name and description are
+**annotations** because label values are capped at 63 characters of a narrow
+charset - too restrictive for a real name or sentence.
+[`promises/database/promise.yaml`](promises/database/promise.yaml) carries
+all three as the reference example.
+
 ## Other targets
 
 ```bash
+make broker-run          # run the marketplace broker API against kind-platform
+make broker-build        # build the broker binary (bin/broker)
+make broker-test         # run the broker's Go tests
 make status             # pod/destination health on both clusters
 make top                 # CPU/memory per pod on both clusters
 make logs-platform       # tail the Kratix controller
