@@ -22,14 +22,18 @@ const maxRequestBody = 1 << 20 // 1MiB - a request's spec should never need more
 
 // Server holds the dependencies every handler needs.
 type Server struct {
-	dynamic dynamic.Interface
-	typed   kubernetes.Interface
-	dir     *tenant.Directory
+	dynamic       dynamic.Interface
+	typed         kubernetes.Interface
+	dir           *tenant.Directory
+	allowedOrigin string
 }
 
-// New builds a Server.
-func New(dynamicClient dynamic.Interface, typedClient kubernetes.Interface, dir *tenant.Directory) *Server {
-	return &Server{dynamic: dynamicClient, typed: typedClient, dir: dir}
+// New builds a Server. allowedOrigin is the origin the UI is served from
+// (e.g. http://localhost:5173 for `make ui-dev`); requests from other
+// origins won't get CORS headers and will be blocked by the browser. Pass
+// "" to disable CORS entirely (same-origin deployments don't need it).
+func New(dynamicClient dynamic.Interface, typedClient kubernetes.Interface, dir *tenant.Directory, allowedOrigin string) *Server {
+	return &Server{dynamic: dynamicClient, typed: typedClient, dir: dir, allowedOrigin: allowedOrigin}
 }
 
 // Handler builds the broker's full routing tree: an unauthenticated
@@ -44,9 +48,15 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("GET /promises/{name}/requests/{reqName}", s.getRequest)
 	apiMux.HandleFunc("DELETE /promises/{name}/requests/{reqName}", s.deleteRequest)
 
+	handler := http.Handler(apiMux)
+	handler = withAuth(s.dir, handler)
+	if s.allowedOrigin != "" {
+		handler = cors(s.allowedOrigin, handler)
+	}
+
 	root := http.NewServeMux()
 	root.HandleFunc("GET /healthz", healthz)
-	root.Handle("/api/", http.StripPrefix("/api", withAuth(s.dir, apiMux)))
+	root.Handle("/api/", http.StripPrefix("/api", handler))
 	return root
 }
 
