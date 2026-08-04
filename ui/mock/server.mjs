@@ -6,7 +6,7 @@
 // Kubernetes. Not used by the production build; dev-only.
 import { createServer } from 'node:http'
 
-const PORT = process.env.MOCK_BROKER_PORT ?? 8080
+const PORT = process.env.MOCK_BROKER_PORT ?? 8878
 
 // Mirrors broker/config/teams.yaml.
 const TEAMS = {

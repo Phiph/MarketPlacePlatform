@@ -114,7 +114,7 @@ build against instead of talking to `kubectl`/the Kubernetes API directly.
 ```bash
 make up            # if you haven't already
 make promise-demo   # installs the database Promise, so there's something to browse
-make broker-run      # starts the broker on :8080, talking to kind-platform
+make broker-run      # starts the broker on :8878, talking to kind-platform
 ```
 
 **Multi-tenancy**: callers are "teams". Each team gets its own namespace
@@ -139,13 +139,13 @@ except `/healthz`):
 | DELETE | `/api/promises/{name}/requests/{reqName}` | Delete a request |
 
 ```bash
-curl -H "Authorization: Bearer demo-key-payments" localhost:8080/api/promises
+curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises
 
 curl -X POST -H "Authorization: Bearer demo-key-payments" \
   -d '{"name":"my-db","spec":{"size":"1Gi"}}' \
-  localhost:8080/api/promises/database/requests
+  localhost:8878/api/promises/database/requests
 
-curl -H "Authorization: Bearer demo-key-payments" localhost:8080/api/promises/database/requests
+curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/requests
 ```
 
 ### Marketplace metadata convention
@@ -177,9 +177,13 @@ schema, and track their status.
 
 ```bash
 make ui-install   # once
-make broker-run   # in one terminal
-make ui-dev        # in another - opens on localhost:5173
+make dev           # runs the broker and the UI dev server together, opens on localhost:5173
 ```
+
+The UI dev server proxies `/api` straight to the broker, so there's no `.env`
+to set up and no CORS to think about - `make dev` just works. Run
+`make broker-run` and `make ui-dev` in separate terminals instead if you want
+their output apart (e.g. to restart one without the other).
 
 No live cluster? `make ui-mock` runs a dependency-free mock of the broker
 (same routes, same auth, an in-memory store) so the UI can be developed and
@@ -188,10 +192,11 @@ demoed on its own. See [ui/README.md](ui/README.md) for details.
 ## Other targets
 
 ```bash
+make dev                 # run the broker + UI dev server together
 make broker-run          # run the marketplace broker API against kind-platform
 make broker-build        # build the broker binary (bin/broker)
 make broker-test         # run the broker's Go tests
-make ui-dev               # run the marketplace UI dev server
+make ui-dev               # run the marketplace UI dev server alone
 make ui-mock               # run the UI's mock broker (no cluster needed)
 make status             # pod/destination health on both clusters
 make top                 # CPU/memory per pod on both clusters

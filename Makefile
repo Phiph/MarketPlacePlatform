@@ -299,7 +299,7 @@ broker-build: ## Build the marketplace broker binary (bin/broker)
 	cd broker && go build -o ../bin/broker ./cmd/broker
 
 .PHONY: broker-run
-broker-run: ## Run the marketplace broker against the platform cluster (localhost:8080, or $BROKER_ADDR)
+broker-run: ## Run the marketplace broker against the platform cluster (localhost:8878, or $BROKER_ADDR)
 	cd broker && BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) go run ./cmd/broker
 
 .PHONY: broker-test
@@ -312,12 +312,19 @@ broker-test: ## Run the broker's Go tests
 ui-install: ## Install the UI's npm dependencies
 	cd ui && npm install
 
+.PHONY: dev
+dev: ## Run the broker + UI dev server together (Ctrl-C stops both); UI proxies /api to the broker, no setup needed
+	@trap 'kill 0' EXIT INT TERM; \
+	$(MAKE) --no-print-directory broker-run & \
+	$(MAKE) --no-print-directory ui-dev & \
+	wait
+
 .PHONY: ui-dev
-ui-dev: ## Run the marketplace UI dev server (localhost:5173) against `make broker-run`
+ui-dev: ## Run the marketplace UI dev server alone (localhost:5173) against an already-running `make broker-run`
 	cd ui && npm run dev
 
 .PHONY: ui-mock
-ui-mock: ## Run the UI's mock broker (localhost:8080) - no cluster needed, for UI-only work
+ui-mock: ## Run the UI's mock broker (localhost:8878) - no cluster needed, for UI-only work
 	cd ui && npm run mock-broker
 
 .PHONY: ui-build

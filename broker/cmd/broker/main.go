@@ -16,7 +16,7 @@ import (
 func main() {
 	addr := os.Getenv("BROKER_ADDR")
 	if addr == "" {
-		addr = ":8080"
+		addr = ":8878" // avoid :8080 - too easily collides with other local dev tools
 	}
 
 	teamsFile := os.Getenv("BROKER_TEAMS_FILE")
