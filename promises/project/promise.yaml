@@ -11,6 +11,10 @@ metadata:
       A logical grouping of environments (see the `environment` Promise) owned
       by one team. Self-served through the broker's dedicated Projects UI/API,
       not the generic ad-hoc catalog.
+    marketplace.kratix.io/owner: platform-team
+    marketplace.kratix.io/lifecycle: experimental
+    marketplace.kratix.io/support: "#platform-eng"
+    marketplace.kratix.io/policy: internal
   name: project
 spec:
   # No destinationSelectors: a Project produces no infrastructure output at

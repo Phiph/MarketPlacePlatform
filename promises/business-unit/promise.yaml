@@ -11,6 +11,10 @@ metadata:
       Provisions a business unit's Capsule Tenant, with its own resource
       quotas. Teams (see the `team` Promise) get their own namespace inside
       it. Operator/day-2 only - not self-served through the catalog.
+    marketplace.kratix.io/owner: platform-team
+    marketplace.kratix.io/lifecycle: stable
+    marketplace.kratix.io/support: "#platform-eng"
+    marketplace.kratix.io/policy: internal
   name: business-unit
 spec:
   # Both pipeline stages write to the platform cluster: Capsule's controller

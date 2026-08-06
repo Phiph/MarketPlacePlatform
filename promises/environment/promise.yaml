@@ -12,6 +12,10 @@ metadata:
       own namespace. Self-served through the broker's dedicated
       `POST /api/environments` endpoint, not the generic ad-hoc catalog or a
       raw `kubectl apply` - see README.md for why.
+    marketplace.kratix.io/owner: platform-team
+    marketplace.kratix.io/lifecycle: experimental
+    marketplace.kratix.io/support: "#platform-eng"
+    marketplace.kratix.io/policy: internal
   name: environment
 spec:
   # Same reasoning as promises/team/promise.yaml: the output Namespace has to
