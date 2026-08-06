@@ -112,18 +112,41 @@ so a future marketplace UI (or anything else) has a friendly contract to
 build against instead of talking to `kubectl`/the Kubernetes API directly.
 
 ```bash
-make up            # if you haven't already
-make promise-demo   # installs the database Promise, so there's something to browse
-make broker-run      # starts the broker on :8878, talking to kind-platform
+make up                                                          # if you haven't already
+make promise-demo                                                # installs the database Promise, so there's something to browse
+make promise-build promise-load PROMISE_DIR=promises/business-unit   # installs Capsule + the business-unit Promise
+kubectl --context kind-platform apply -f promises/business-unit/promise.yaml
+make promise-build promise-load PROMISE_DIR=promises/team        # installs the team Promise
+kubectl --context kind-platform apply -f promises/team/promise.yaml
+make broker-provision-teams  # submits a BusinessUnit + Team request per broker/config/teams.yaml
+make broker-run              # starts the broker on :8878, talking to kind-platform
 ```
 
-**Multi-tenancy**: callers are "teams". Each team gets its own namespace
-(`team-<name>`) that its requests live in - one team can't see or touch
-another's. Auth is a **static demo-only** API-key -> team mapping
-(`broker/config/teams.yaml`; ships with `team-payments` / `demo-key-payments`
-and `team-checkout` / `demo-key-checkout`) - there's no real authn (no OIDC/
+**Multi-tenancy** is two levels: **business units** and **teams** within them. Each team gets
+its own namespace (`team-<name>`) that its requests live in - one team can't see or touch
+another's, *even another team in the same business unit* - and that boundary is enforced by
+Kubernetes RBAC, not application code. Concretely: a business unit is a Capsule
+(https://projectcapsule.dev) `Tenant` (provisioned via the `business-unit` Promise,
+`promises/business-unit/`), with resource quotas but deliberately **no owners** - Capsule's
+normal owner model grants every owner every namespace in the Tenant, which would let sibling
+teams see each other. Team-level isolation instead comes from a single, shared
+`GlobalTenantResource` (installed once, alongside Capsule) that binds each team's own
+Kubernetes Group to only its own namespace (created by the `team` Promise,
+`promises/team/`, referencing its business unit). Every broker call runs impersonating that
+team's own Group (`broker/internal/k8sclient/impersonate.go`), so it's the Kubernetes API
+server that actually stops Team A from touching Team B's resources, not a namespace string the
+broker computed. See `promises/business-unit/README.md` for how that's wired up, including a
+couple of non-obvious gotchas (Flux/Capsule apply-ordering - across *both* Promises, not just
+within one - and RBAC aggregation) discovered getting it working end-to-end.
+
+Auth (API-key -> team) is still a **static demo-only** mapping
+(`broker/config/teams.yaml`; ships with `payments` / `demo-key-payments`
+and `checkout` / `demo-key-checkout`) - there's no real authn (no OIDC/
 SSO), which is fine for a local kind cluster but is the first thing to
-replace before this becomes anything but a demo.
+replace before this becomes anything but a demo. That's a separate concern
+from the namespace/RBAC boundary above: a broker bug in resolving API
+key->team would still only ever grant access to *some* team's resources, not
+an arbitrary one.
 
 **Endpoints** (all under `/api`, all requiring `Authorization: Bearer <key>`
 except `/healthz`):

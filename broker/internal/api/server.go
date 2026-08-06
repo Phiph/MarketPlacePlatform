@@ -10,10 +10,9 @@ import (
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
 
 	"marketplace-broker/internal/catalog"
+	"marketplace-broker/internal/k8sclient"
 	"marketplace-broker/internal/resourceapi"
 	"marketplace-broker/internal/tenant"
 )
@@ -22,8 +21,7 @@ const maxRequestBody = 1 << 20 // 1MiB - a request's spec should never need more
 
 // Server holds the dependencies every handler needs.
 type Server struct {
-	dynamic       dynamic.Interface
-	typed         kubernetes.Interface
+	admin         *k8sclient.Clients
 	dir           *tenant.Directory
 	allowedOrigin string
 }
@@ -32,8 +30,8 @@ type Server struct {
 // (e.g. http://localhost:5173 for `make ui-dev`); requests from other
 // origins won't get CORS headers and will be blocked by the browser. Pass
 // "" to disable CORS entirely (same-origin deployments don't need it).
-func New(dynamicClient dynamic.Interface, typedClient kubernetes.Interface, dir *tenant.Directory, allowedOrigin string) *Server {
-	return &Server{dynamic: dynamicClient, typed: typedClient, dir: dir, allowedOrigin: allowedOrigin}
+func New(clients *k8sclient.Clients, dir *tenant.Directory, allowedOrigin string) *Server {
+	return &Server{admin: clients, dir: dir, allowedOrigin: allowedOrigin}
 }
 
 // Handler builds the broker's full routing tree: an unauthenticated
@@ -67,7 +65,7 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listPromises(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "true"
 
-	entries, err := catalog.List(r.Context(), s.dynamic, all)
+	entries, err := catalog.List(r.Context(), s.admin.Dynamic, all)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -103,18 +101,20 @@ func (s *Server) submitRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	team := teamFromContext(r.Context())
-	ns, err := tenant.EnsureNamespace(r.Context(), s.typed, team)
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	created, err := resourceapi.Submit(r.Context(), s.dynamic, *entry, ns, body.Name, body.Spec)
+	created, err := resourceapi.Submit(r.Context(), client, *entry, tenant.Namespace(team), body.Name, body.Spec)
 	switch {
 	case errors.Is(err, resourceapi.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "a request named "+body.Name+" already exists")
 	case apierrors.IsInvalid(err):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
 	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 	default:
@@ -129,8 +129,18 @@ func (s *Server) listRequests(w http.ResponseWriter, r *http.Request) {
 	}
 
 	team := teamFromContext(r.Context())
-	items, err := resourceapi.List(r.Context(), s.dynamic, *entry, tenant.Namespace(team))
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
 	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	items, err := resourceapi.List(r.Context(), client, *entry, tenant.Namespace(team))
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -149,9 +159,19 @@ func (s *Server) getRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	team := teamFromContext(r.Context())
-	reqName := r.PathValue("reqName")
-	obj, ok, err := resourceapi.Get(r.Context(), s.dynamic, *entry, tenant.Namespace(team), reqName)
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
 	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	reqName := r.PathValue("reqName")
+	obj, ok, err := resourceapi.Get(r.Context(), client, *entry, tenant.Namespace(team), reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -169,9 +189,19 @@ func (s *Server) deleteRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	team := teamFromContext(r.Context())
-	reqName := r.PathValue("reqName")
-	deleted, err := resourceapi.Delete(r.Context(), s.dynamic, *entry, tenant.Namespace(team), reqName)
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
 	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	reqName := r.PathValue("reqName")
+	deleted, err := resourceapi.Delete(r.Context(), client, *entry, tenant.Namespace(team), reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -188,7 +218,7 @@ func (s *Server) deleteRequest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) lookupPromise(w http.ResponseWriter, r *http.Request) (*catalog.Entry, bool) {
 	name := r.PathValue("name")
 
-	entry, ok, err := catalog.Get(r.Context(), s.dynamic, name)
+	entry, ok, err := catalog.Get(r.Context(), s.admin.Dynamic, name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return nil, false

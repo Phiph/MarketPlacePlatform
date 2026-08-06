@@ -18,6 +18,11 @@ import (
 type Clients struct {
 	Dynamic dynamic.Interface
 	Typed   kubernetes.Interface
+	// Groups builds per-team impersonated clients (see impersonate.go) -
+	// how every resource-request call is scoped to the calling team's
+	// namespace, with Capsule (not application code) enforcing the
+	// boundary.
+	Groups *GroupClients
 }
 
 // New builds Clients from a kubeconfig, honouring the standard KUBECONFIG
@@ -54,5 +59,5 @@ func newFromRESTConfig(config *rest.Config) (*Clients, error) {
 		return nil, fmt.Errorf("building typed client: %w", err)
 	}
 
-	return &Clients{Dynamic: dynamicClient, Typed: typedClient}, nil
+	return &Clients{Dynamic: dynamicClient, Typed: typedClient, Groups: NewGroupClients(config)}, nil
 }

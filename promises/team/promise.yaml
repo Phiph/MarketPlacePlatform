@@ -1,0 +1,73 @@
+apiVersion: platform.kratix.io/v1alpha1
+kind: Promise
+metadata:
+  creationTimestamp: null
+  labels:
+    kratix.io/promise-version: v0.1.0
+    marketplace.kratix.io/visible: "false"
+  annotations:
+    marketplace.kratix.io/display-name: Team
+    marketplace.kratix.io/description: >-
+      Provisions a team's namespace inside its business unit's Capsule
+      Tenant. Operator/day-2 only - not self-served through the catalog.
+  name: team
+spec:
+  # See promises/business-unit/promise.yaml for why this selector - same
+  # platform-cluster reasoning applies here.
+  destinationSelectors:
+  - matchLabels:
+      environment: platform
+  api:
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      creationTimestamp: null
+      name: teams.demo.kratix.io
+    spec:
+      group: demo.kratix.io
+      names:
+        kind: Team
+        plural: teams
+        singular: team
+      scope: Namespaced
+      versions:
+      - name: v1alpha1
+        schema:
+          openAPIV3Schema:
+            properties:
+              spec:
+                properties:
+                  businessUnit:
+                    type: string
+                    description: >-
+                      Name of the BusinessUnit (see the `business-unit`
+                      Promise) this team belongs to. Must already exist -
+                      Capsule rejects this team's namespace otherwise.
+                required:
+                - businessUnit
+                type: object
+            type: object
+        served: true
+        storage: true
+    status:
+      acceptedNames:
+        kind: ""
+        plural: ""
+      conditions: null
+      storedVersions: null
+  workflows:
+    config: {}
+    resource:
+      configure:
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: team-configure
+        spec:
+          containers:
+          - image: kratix-guide/team-resource-pipeline:v0.1.0
+            name: kratix-guide-team-resource-pipeline
+status:
+  workflows: 0
+  workflowsFailed: 0
+  workflowsSucceeded: 0

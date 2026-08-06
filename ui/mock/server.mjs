@@ -10,8 +10,8 @@ const PORT = process.env.MOCK_BROKER_PORT ?? 8878
 
 // Mirrors broker/config/teams.yaml.
 const TEAMS = {
-  'demo-key-payments': 'team-payments',
-  'demo-key-checkout': 'team-checkout',
+  'demo-key-payments': 'payments',
+  'demo-key-checkout': 'checkout',
 }
 
 // Mirrors the catalog.Entry shape the real broker emits from installed
@@ -235,6 +235,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`mock broker listening on http://localhost:${PORT}`)
-  console.log('  demo-key-payments -> team-payments')
-  console.log('  demo-key-checkout -> team-checkout')
+  console.log('  demo-key-payments -> payments')
+  console.log('  demo-key-checkout -> checkout')
 })

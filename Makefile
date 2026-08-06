@@ -306,6 +306,28 @@ broker-run: ## Run the marketplace broker against the platform cluster (localhos
 broker-test: ## Run the broker's Go tests
 	cd broker && go test ./...
 
+.PHONY: broker-provision-teams
+broker-provision-teams: ## Submit a BusinessUnit + Team request for every entry in broker/config/teams.yaml
+	@yq '.businessUnits | keys | .[]' broker/config/teams.yaml | while read -r bu; do \
+		echo "Provisioning business unit $$bu"; \
+		printf 'apiVersion: demo.kratix.io/v1alpha1\nkind: BusinessUnit\nmetadata:\n  name: %s\n  namespace: default\nspec: {}\n' "$$bu" | \
+			kubectl --context $(PLATFORM_CTX) apply -f -; \
+	done
+	@yq '.businessUnits | keys | .[]' broker/config/teams.yaml | while read -r bu; do \
+		echo "Waiting for business unit $$bu's Capsule Tenant (must exist before any Team request references it - see promises/business-unit/README.md)..."; \
+		for i in $$(seq 1 60); do \
+			kubectl --context $(PLATFORM_CTX) get tenants.capsule.clastix.io "$$bu" >/dev/null 2>&1 && break; \
+			sleep 2; \
+		done; \
+		kubectl --context $(PLATFORM_CTX) get tenants.capsule.clastix.io "$$bu" >/dev/null 2>&1 || \
+			{ echo "Tenant $$bu never appeared after 120s - check 'kubectl get kustomization -n flux-system' and the businessunit's own status"; exit 1; }; \
+	done
+	@yq '.businessUnits | to_entries | .[] | .key as $$bu | .value.teams | keys | .[] | $$bu + " " + .' broker/config/teams.yaml | while read -r bu team; do \
+		echo "Provisioning team $$team (business unit $$bu)"; \
+		printf 'apiVersion: demo.kratix.io/v1alpha1\nkind: Team\nmetadata:\n  name: %s\n  namespace: default\nspec:\n  businessUnit: %s\n' "$$team" "$$bu" | \
+			kubectl --context $(PLATFORM_CTX) apply -f -; \
+	done
+
 ##@ Marketplace UI
 
 .PHONY: ui-install
