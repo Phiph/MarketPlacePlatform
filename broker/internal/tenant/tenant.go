@@ -122,8 +122,20 @@ func Namespace(team string) string {
 // truth on the Go side - promises/environment's pipeline.py's
 // namespace_name() must compute the identical string; see the comments on
 // both.
-func ProjectEnvironmentNamespace(project, environment string) string {
-	return "project-" + project + "-" + environment
+//
+// team is part of the name, not just project/environment: Namespaces are
+// cluster-scoped in Kubernetes, but a Project's name is only unique within
+// its owning team's own namespace (two different teams can both create a
+// project called "checkout-service"). Without team in the string, two
+// teams picking the same project+environment name would collide on one
+// real Namespace - and since it's applied declaratively (kubectl
+// apply/Flux), whichever team's Environment request reconciled second
+// would silently overwrite the first's marketplace.kratix.io/team label,
+// handing the namespace's RBAC to the wrong team. team names are already
+// assumed globally unique across the whole directory (see Namespace()
+// above), so prefixing with team makes this collision-proof the same way.
+func ProjectEnvironmentNamespace(team, project, environment string) string {
+	return "project-" + team + "-" + project + "-" + environment
 }
 
 // GroupPrefix namespaces the Kubernetes Group every impersonated broker

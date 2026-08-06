@@ -195,7 +195,7 @@ kubectl --context kind-platform apply -f promises/business-unit/example-resource
 The layer this README used to sketch as "future direction" is now built: a team can own
 multiple **Projects** (`promises/project/`), each with multiple **Environments**
 (`promises/environment/`) - `dev`, `staging`, `prod`, ... - and each environment is its own
-deployable namespace (`project-<project>-<environment>`) that Promise resource requests land
+deployable namespace (`project-<team>-<project>-<environment>`) that Promise resource requests land
 in, traceable back to the owning team via the same `marketplace.kratix.io/team` label this
 README describes above. As predicted, the Capsule/RBAC mechanism above needed zero changes to
 support it - see `promises/environment/README.md` for how. The real work landed in the broker's

@@ -130,7 +130,7 @@ func (s *Server) submitScopedRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team := teamFromContext(r.Context())
-	namespace := tenant.ProjectEnvironmentNamespace(r.PathValue("project"), r.PathValue("environment"))
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
 	s.doSubmitRequest(w, r, *entry, team, namespace)
 }
 
@@ -184,7 +184,7 @@ func (s *Server) listScopedRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team := teamFromContext(r.Context())
-	namespace := tenant.ProjectEnvironmentNamespace(r.PathValue("project"), r.PathValue("environment"))
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
 	s.doListRequests(w, r, *entry, team, namespace)
 }
 
@@ -227,7 +227,7 @@ func (s *Server) getScopedRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team := teamFromContext(r.Context())
-	namespace := tenant.ProjectEnvironmentNamespace(r.PathValue("project"), r.PathValue("environment"))
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
 	s.doGetRequest(w, r, *entry, team, namespace)
 }
 
@@ -270,7 +270,7 @@ func (s *Server) deleteScopedRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	team := teamFromContext(r.Context())
-	namespace := tenant.ProjectEnvironmentNamespace(r.PathValue("project"), r.PathValue("environment"))
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
 	s.doDeleteRequest(w, r, *entry, team, namespace)
 }
 

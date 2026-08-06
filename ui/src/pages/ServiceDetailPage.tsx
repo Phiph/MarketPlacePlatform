@@ -211,7 +211,7 @@ export function ServiceDetailPage() {
         </Select>
         <p className="text-xs text-muted-foreground">
           {target
-            ? `Requests land in project-${target.project}-${target.environment}.`
+            ? `Requests land in project-${session?.team}-${target.project}-${target.environment}.`
             : `Requests land in ${session?.team}'s default namespace. Manage projects/environments from the Projects page.`}
         </p>
       </div>

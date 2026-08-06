@@ -31,16 +31,28 @@ func TestNamespace(t *testing.T) {
 
 func TestProjectEnvironmentNamespace(t *testing.T) {
 	cases := []struct {
-		project, environment, want string
+		team, project, environment, want string
 	}{
-		{"checkout-service", "dev", "project-checkout-service-dev"},
-		{"checkout-service", "prod", "project-checkout-service-prod"},
+		{"checkout", "checkout-service", "dev", "project-checkout-checkout-service-dev"},
+		{"checkout", "checkout-service", "prod", "project-checkout-checkout-service-prod"},
 	}
 
 	for _, tc := range cases {
-		if got := ProjectEnvironmentNamespace(tc.project, tc.environment); got != tc.want {
-			t.Errorf("ProjectEnvironmentNamespace(%q, %q) = %q, want %q", tc.project, tc.environment, got, tc.want)
+		if got := ProjectEnvironmentNamespace(tc.team, tc.project, tc.environment); got != tc.want {
+			t.Errorf("ProjectEnvironmentNamespace(%q, %q, %q) = %q, want %q", tc.team, tc.project, tc.environment, got, tc.want)
 		}
+	}
+}
+
+// Two teams picking an identical project+environment name must never
+// collide on the same Namespace - that's the whole reason team is part of
+// the string. See the function's doc comment for the incident this guards
+// against.
+func TestProjectEnvironmentNamespaceCrossTeamUniqueness(t *testing.T) {
+	payments := ProjectEnvironmentNamespace("payments", "data-engine", "dev")
+	checkout := ProjectEnvironmentNamespace("checkout", "data-engine", "dev")
+	if payments == checkout {
+		t.Fatalf("two teams with the same project+environment name collided on namespace %q", payments)
 	}
 }
 

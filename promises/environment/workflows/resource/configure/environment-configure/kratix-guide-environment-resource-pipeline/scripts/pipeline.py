@@ -6,8 +6,18 @@ import yaml
 # computes this identical string - the two can't share code across
 # languages, so both sides carry a comment pointing at the other. Same
 # convention promises/team/'s pipeline uses for its own Namespace().
-def namespace_name(project: str, environment: str) -> str:
-    return f"project-{project}-{environment}"
+#
+# team is part of the name, not just project/environment: Namespaces are
+# cluster-scoped, but a Project's name is only unique within its own
+# team's namespace - two different teams can both create a project called
+# "checkout-service". Without team in the string, two teams picking the
+# same project+environment name would collide on one real Namespace, and
+# whichever Environment request reconciled second would silently overwrite
+# the first's marketplace.kratix.io/team label - handing that namespace's
+# RBAC to the wrong team. See tenant.ProjectEnvironmentNamespace()'s
+# comment for the full reasoning.
+def namespace_name(team: str, project: str, environment: str) -> str:
+    return f"project-{team}-{project}-{environment}"
 
 
 # Read by the shared GlobalTenantResource (see promises/business-unit's
@@ -33,7 +43,7 @@ def main():
     team = resource.get_value("spec.team")
     business_unit = resource.get_value("spec.businessUnit")
 
-    ns = namespace_name(project, environment)
+    ns = namespace_name(team, project, environment)
 
     # Only ever writes a Namespace - never a Tenant, same separation
     # promises/team's pipeline relies on (see that Promise's README,

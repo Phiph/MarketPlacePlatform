@@ -145,7 +145,7 @@ within one - and RBAC aggregation) discovered getting it working end-to-end.
 
 A team can further self-serve two more levels underneath its own namespace: **projects**
 (`promises/project/`) and **environments** (`promises/environment/`, `dev`/`staging`/`prod`/...
-- each its own namespace, `project-<project>-<environment>`). This needed no changes to the
+- each its own namespace, `project-<team>-<project>-<environment>`). This needed no changes to the
 RBAC mechanism above - an environment's namespace carries the exact same
 `marketplace.kratix.io/team` label a team's own namespace does, so the same
 `GlobalTenantResource` grants access to it identically. See
@@ -218,8 +218,12 @@ curl -X POST -H "Authorization: Bearer demo-key-checkout" \
   localhost:8878/api/projects/checkout-service/environments/dev/promises/database/requests
 ```
 
-That request lands in namespace `project-checkout-service-dev`, not `team-checkout` - the flat
-routes remain the default for everything that doesn't opt into a project/environment.
+That request lands in namespace `project-checkout-checkout-service-dev`, not `team-checkout` -
+the flat routes remain the default for everything that doesn't opt into a project/environment.
+Team is part of the namespace name, not just project/environment - see
+`promises/environment/README.md`, "Why team is part of the namespace name", for why: without
+it, two teams picking an identical project+environment name would collide on one real
+namespace.
 
 ### Marketplace metadata convention
 
