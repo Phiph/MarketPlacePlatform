@@ -236,6 +236,10 @@ Promise author opts it in (and describes it) with labels/annotations on the
 | `marketplace.kratix.io/visible` | label | `"true"` to list it in `GET /api/promises`. **Default is hidden** if absent - installing a Promise never silently publishes it. |
 | `marketplace.kratix.io/display-name` | annotation | Human-readable name shown in the catalog. Falls back to the Promise's `metadata.name` if absent. |
 | `marketplace.kratix.io/description` | annotation | Free-text description. Omitted from the entry if absent. |
+| `marketplace.kratix.io/owner` | annotation | Team accountable for *this Promise's* pipeline/maintenance - e.g. `platform-team`. Distinct from `marketplace.kratix.io/team` (set by the `team` Promise on the *resources* it creates), which tags per-request consumer ownership, not Promise-authoring ownership. |
+| `marketplace.kratix.io/lifecycle` | annotation | Maturity stage: `experimental`, `stable`, or `deprecated`. |
+| `marketplace.kratix.io/support` | annotation | Where to get help - a Slack channel, email, or on-call link. |
+| `marketplace.kratix.io/policy` | annotation | Data/compliance classification: `internal`, `confidential`, or `regulated`. |
 
 Visibility is a **label**, not an annotation, specifically so the broker can
 filter with a Kubernetes `LabelSelector` at list time rather than fetching
@@ -243,7 +247,20 @@ every Promise and filtering after the fact. Display name and description are
 **annotations** because label values are capped at 63 characters of a narrow
 charset - too restrictive for a real name or sentence.
 [`promises/database/promise.yaml`](promises/database/promise.yaml) carries
-all three as the reference example.
+all seven as the reference example.
+
+**Operational evidence.** The last four keys - `owner`, `lifecycle`,
+`support`, `policy` - are **required on every installed Promise**,
+regardless of `visible`: they answer "who's accountable, how mature is it,
+who do I ask for help, what data policy applies" for a security or finance
+actor auditing the platform, without anyone walking them through a README.
+`GET /api/promises?all=true` and `GET /api/promises/{name}` both return
+every installed Promise's evidence (and, for any gap, a `missingEvidence`
+list naming exactly which annotations are absent or invalid) regardless of
+catalog visibility - the broker doesn't gate this on whether a Promise is
+self-served through the generic catalog.
+`broker/internal/catalog/evidence_lint_test.go` fails `make broker-test` if
+any checked-in Promise regresses on this.
 
 ## Marketplace UI
 
