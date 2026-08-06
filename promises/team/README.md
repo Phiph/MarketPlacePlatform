@@ -8,6 +8,9 @@ it; see that Promise's README, "Provisioning order matters", for why).
 Marked `marketplace.kratix.io/visible: "false"`: provisioning a team is an operator/day-2
 action, not something end-user teams self-serve through the catalog (unlike `database`).
 
+**Operational evidence** (see the root `README.md`'s "Marketplace metadata convention"):
+owner `platform-team`, lifecycle `stable`, support `#platform-eng`, policy `internal`.
+
 - `promise.yaml` - the `Team` CRD (`demo.kratix.io/v1alpha1`), with a single required field,
   `spec.businessUnit` (the name of an already-provisioned `BusinessUnit`). No promise-level
   dependency workflow here - Capsule and its CRDs are installed once by `business-unit`'s own

@@ -12,6 +12,9 @@ broker-owned fields" below for why a raw `kubectl apply` or the generic
 `/api/promises/environment/requests` route are both unsafe paths for a team to use directly,
 even though nothing technically stops it.
 
+**Operational evidence** (see the root `README.md`'s "Marketplace metadata convention"):
+owner `platform-team`, lifecycle `experimental`, support `#platform-eng`, policy `internal`.
+
 - `promise.yaml` - the `Environment` CRD (`demo.kratix.io/v1alpha1`), with three required
   fields: `spec.project` (name of an already-created `Project`, same namespace),
   `spec.team`, `spec.businessUnit`.
