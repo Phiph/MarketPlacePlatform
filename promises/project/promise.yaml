@@ -1,0 +1,68 @@
+apiVersion: platform.kratix.io/v1alpha1
+kind: Promise
+metadata:
+  creationTimestamp: null
+  labels:
+    kratix.io/promise-version: v0.1.0
+    marketplace.kratix.io/visible: "false"
+  annotations:
+    marketplace.kratix.io/display-name: Project
+    marketplace.kratix.io/description: >-
+      A logical grouping of environments (see the `environment` Promise) owned
+      by one team. Self-served through the broker's dedicated Projects UI/API,
+      not the generic ad-hoc catalog.
+  name: project
+spec:
+  # No destinationSelectors: a Project produces no infrastructure output at
+  # all (see README.md, "Why no infra output") - there's nothing to
+  # schedule anywhere, so the field is irrelevant either way.
+  api:
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      creationTimestamp: null
+      name: projects.demo.kratix.io
+    spec:
+      group: demo.kratix.io
+      names:
+        kind: Project
+        plural: projects
+        singular: project
+      scope: Namespaced
+      versions:
+      - name: v1alpha1
+        schema:
+          openAPIV3Schema:
+            properties:
+              spec:
+                properties:
+                  description:
+                    type: string
+                    description: >-
+                      Optional human-readable description of this project.
+                type: object
+            type: object
+        served: true
+        storage: true
+    status:
+      acceptedNames:
+        kind: ""
+        plural: ""
+      conditions: null
+      storedVersions: null
+  workflows:
+    config: {}
+    resource:
+      configure:
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: project-configure
+        spec:
+          containers:
+          - image: kratix-guide/project-resource-pipeline:v0.1.0
+            name: kratix-guide-project-resource-pipeline
+status:
+  workflows: 0
+  workflowsFailed: 0
+  workflowsSucceeded: 0

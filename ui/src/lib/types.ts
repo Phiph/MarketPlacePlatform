@@ -61,3 +61,23 @@ export interface ResourceStatus {
 export interface ApiErrorBody {
   error: string
 }
+
+// A team's Project - an instance of the `project` Promise's custom
+// resource. See broker/../promises/project/.
+export interface Project extends ResourceRequest {
+  spec?: {
+    description?: string
+  }
+}
+
+// One environment (dev/staging/prod/...) of a Project - an instance of the
+// `environment` Promise's custom resource. spec.team/spec.businessUnit are
+// broker-owned (see promises/environment/README.md); the UI never sets them
+// itself, POST /api/environments composes them server-side.
+export interface Environment extends ResourceRequest {
+  spec?: {
+    project: string
+    team: string
+    businessUnit: string
+  }
+}

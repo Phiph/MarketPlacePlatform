@@ -1,0 +1,12 @@
+apiVersion: demo.kratix.io/v1alpha1
+kind: Environment
+metadata:
+  name: dev
+  namespace: team-checkout
+spec:
+  project: checkout-service
+  # team/businessUnit are broker-owned in normal use (see promise.yaml) -
+  # set here only because this file is applied directly with kubectl for
+  # local iteration, bypassing the broker's POST /api/environments endpoint.
+  team: checkout
+  businessUnit: platform-org

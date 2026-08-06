@@ -17,9 +17,17 @@
 //     and, per namespace, binds that one namespace's own team Group to it -
 //     never to its business-unit-mates'.
 //
-// Both this package's Namespace() and Group() must stay byte-for-byte in
-// sync with the naming those two pipelines compute - see the comments on
-// each.
+// A team can further self-serve two more levels underneath its own
+// namespace: project (promises/project/) and environment
+// (promises/environment/). An environment's Namespace carries the exact
+// same marketplace.kratix.io/team label a team's own namespace does, so the
+// GlobalTenantResource above grants access to it identically - no RBAC
+// changes were needed to add this layer, only namespace-naming and
+// request-routing (see internal/api's project/environment-scoped routes).
+//
+// Both this package's Namespace() and Group() (and ProjectEnvironmentNamespace,
+// its scoped-routing equivalent) must stay byte-for-byte in sync with the
+// naming those pipelines compute - see the comments on each.
 package tenant
 
 import (
@@ -38,13 +46,16 @@ import (
 //	      payments: "demo-key-payments"
 //	      checkout: "demo-key-checkout"
 //
-// The business unit a team belongs to only matters at provisioning time
-// (which business-unit's Tenant a team's namespace request should reference)
-// - once a team's namespace and RBAC exist, request handling only ever
-// needs the team name, so Directory discards the business-unit grouping
-// after Load.
+// The business unit a team belongs to matters twice: at provisioning time
+// (which business-unit's Tenant a team's namespace request should
+// reference) and again whenever the broker composes an Environment request
+// on a team's behalf (spec.businessUnit - see BusinessUnit below and
+// internal/api's POST /environments handler), so unlike before the
+// project/environment layer existed, Directory keeps it around after Load
+// rather than discarding it.
 type Directory struct {
-	teamByAPIKey map[string]string
+	teamByAPIKey       map[string]string
+	businessUnitByTeam map[string]string
 }
 
 type directoryFile struct {
@@ -66,22 +77,34 @@ func Load(path string) (*Directory, error) {
 	}
 
 	teamByAPIKey := make(map[string]string)
-	for _, bu := range file.BusinessUnits {
-		for team, apiKey := range bu.Teams {
+	businessUnitByTeam := make(map[string]string)
+	for bu, entry := range file.BusinessUnits {
+		for team, apiKey := range entry.Teams {
 			if team == "" || apiKey == "" {
 				continue
 			}
 			teamByAPIKey[apiKey] = team
+			businessUnitByTeam[team] = bu
 		}
 	}
 
-	return &Directory{teamByAPIKey: teamByAPIKey}, nil
+	return &Directory{teamByAPIKey: teamByAPIKey, businessUnitByTeam: businessUnitByTeam}, nil
 }
 
 // Resolve looks up which team an API key belongs to.
 func (d *Directory) Resolve(apiKey string) (team string, ok bool) {
 	team, ok = d.teamByAPIKey[apiKey]
 	return team, ok
+}
+
+// BusinessUnit looks up which business unit a team belongs to. Used to
+// broker-compose an Environment request's spec.businessUnit from the
+// authenticated caller, rather than trusting a client-supplied value (see
+// promises/environment/README.md, "Why team/businessUnit are broker-owned
+// fields").
+func (d *Directory) BusinessUnit(team string) (bu string, ok bool) {
+	bu, ok = d.businessUnitByTeam[team]
+	return bu, ok
 }
 
 // Namespace returns the Kubernetes namespace a team's resource requests live
@@ -91,6 +114,28 @@ func (d *Directory) Resolve(apiKey string) (team string, ok bool) {
 // can authenticate at all, its namespace should already exist.
 func Namespace(team string) string {
 	return "team-" + team
+}
+
+// ProjectEnvironmentNamespace returns the Kubernetes namespace a project's
+// environment's resource requests live in - the scoped-routing equivalent
+// of Namespace() above. This is the naming convention's single source of
+// truth on the Go side - promises/environment's pipeline.py's
+// namespace_name() must compute the identical string; see the comments on
+// both.
+//
+// team is part of the name, not just project/environment: Namespaces are
+// cluster-scoped in Kubernetes, but a Project's name is only unique within
+// its owning team's own namespace (two different teams can both create a
+// project called "checkout-service"). Without team in the string, two
+// teams picking the same project+environment name would collide on one
+// real Namespace - and since it's applied declaratively (kubectl
+// apply/Flux), whichever team's Environment request reconciled second
+// would silently overwrite the first's marketplace.kratix.io/team label,
+// handing the namespace's RBAC to the wrong team. team names are already
+// assumed globally unique across the whole directory (see Namespace()
+// above), so prefixing with team makes this collision-proof the same way.
+func ProjectEnvironmentNamespace(team, project, environment string) string {
+	return "project-" + team + "-" + project + "-" + environment
 }
 
 // GroupPrefix namespaces the Kubernetes Group every impersonated broker
