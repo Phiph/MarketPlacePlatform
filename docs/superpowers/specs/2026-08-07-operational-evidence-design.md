@@ -97,8 +97,8 @@ A new Go test, `broker/internal/catalog/evidence_lint_test.go`:
   `broker/internal/catalog/` to the repo root, then into `promises/`) - the real checked-in
   files, distinct from `catalog_test.go`'s synthetic in-memory fixtures, which don't touch
   the actual YAML on disk.
-- Unmarshals each file into `unstructured.Unstructured` via `sigs.k8s.io/yaml` (already an
-  indirect dependency in `broker/go.mod`; this makes it direct).
+- Unmarshals each file into `unstructured.Unstructured` via `sigs.k8s.io/yaml` (already a
+  direct dependency in `broker/go.mod` - no dependency changes needed).
 - Runs the same `parseEntry` used by the live broker, and fails - naming the specific
   Promise and the specific missing/invalid annotation - if `MissingEvidence` is non-empty
   for any Promise.
@@ -133,7 +133,6 @@ by a future audit.
 - `broker/internal/catalog/catalog.go` - new constants, `Entry` fields, `parseEntry` logic
 - `broker/internal/catalog/catalog_test.go` - new field/`MissingEvidence` coverage
 - `broker/internal/catalog/evidence_lint_test.go` - new file, real-YAML lint test
-- `broker/go.mod` / `go.sum` - `sigs.k8s.io/yaml` promoted to direct dependency
 - `promises/{database,business-unit,environment,project,team}/promise.yaml` - four new
   annotations each
 - `promises/{database,business-unit,environment,project,team}/README.md` - one-line
