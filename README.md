@@ -119,6 +119,10 @@ kubectl --context kind-platform apply -f promises/business-unit/promise.yaml
 make promise-build promise-load PROMISE_DIR=promises/team        # installs the team Promise
 kubectl --context kind-platform apply -f promises/team/promise.yaml
 make broker-provision-teams  # submits a BusinessUnit + Team request per broker/config/teams.yaml
+make promise-build promise-load PROMISE_DIR=promises/project     # installs the project Promise
+kubectl --context kind-platform apply -f promises/project/promise.yaml
+make promise-build promise-load PROMISE_DIR=promises/environment # installs the environment Promise
+kubectl --context kind-platform apply -f promises/environment/promise.yaml
 make broker-run              # starts the broker on :8878, talking to kind-platform
 ```
 
@@ -139,6 +143,15 @@ broker computed. See `promises/business-unit/README.md` for how that's wired up,
 couple of non-obvious gotchas (Flux/Capsule apply-ordering - across *both* Promises, not just
 within one - and RBAC aggregation) discovered getting it working end-to-end.
 
+A team can further self-serve two more levels underneath its own namespace: **projects**
+(`promises/project/`) and **environments** (`promises/environment/`, `dev`/`staging`/`prod`/...
+- each its own namespace, `project-<project>-<environment>`). This needed no changes to the
+RBAC mechanism above - an environment's namespace carries the exact same
+`marketplace.kratix.io/team` label a team's own namespace does, so the same
+`GlobalTenantResource` grants access to it identically. See
+`promises/environment/README.md` for the one place this layer *does* need broker-side care
+(composing `spec.team`/`spec.businessUnit` itself rather than trusting the request body).
+
 Auth (API-key -> team) is still a **static demo-only** mapping
 (`broker/config/teams.yaml`; ships with `payments` / `demo-key-payments`
 and `checkout` / `demo-key-checkout`) - there's no real authn (no OIDC/
@@ -156,10 +169,15 @@ except `/healthz`):
 | GET | `/healthz` | Liveness, no auth |
 | GET | `/api/promises` | List catalog-visible Promises (add `?all=true` to see hidden ones too) |
 | GET | `/api/promises/{name}` | One Promise's full entry, including its request schema |
-| POST | `/api/promises/{name}/requests` | Submit a request: `{"name": "...", "spec": {...}}` |
+| POST | `/api/promises/{name}/requests` | Submit a request in the caller's own `team-<name>` namespace: `{"name": "...", "spec": {...}}` |
 | GET | `/api/promises/{name}/requests` | List the calling team's requests against this Promise |
 | GET | `/api/promises/{name}/requests/{reqName}` | One request's current status |
 | DELETE | `/api/promises/{name}/requests/{reqName}` | Delete a request |
+| POST | `/api/environments` | Create an Environment under one of the caller's Projects: `{"name": "...", "project": "..."}` - see "Projects and Environments" below |
+| POST | `/api/projects/{project}/environments/{environment}/promises/{name}/requests` | Same as the flat submit route above, but scoped into that project/environment's namespace instead |
+| GET | `/api/projects/{project}/environments/{environment}/promises/{name}/requests` | Scoped equivalent of the flat list route |
+| GET | `/api/projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}` | Scoped equivalent of the flat get route |
+| DELETE | `/api/projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}` | Scoped equivalent of the flat delete route |
 
 ```bash
 curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises
@@ -170,6 +188,38 @@ curl -X POST -H "Authorization: Bearer demo-key-payments" \
 
 curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/requests
 ```
+
+### Projects and Environments
+
+A `Project` (`promises/project/`) is just a name a team's Environments group under - create one
+through the generic routes above, same as any other Promise request:
+
+```bash
+curl -X POST -H "Authorization: Bearer demo-key-checkout" \
+  -d '{"name":"checkout-service","spec":{"description":"Checkout services"}}' \
+  localhost:8878/api/promises/project/requests
+```
+
+An `Environment` (`promises/environment/`) needs its own dedicated endpoint instead, since
+creating one has to set which team owns the resulting namespace - see
+`promises/environment/README.md` for why that can't just be another field in the request body:
+
+```bash
+curl -X POST -H "Authorization: Bearer demo-key-checkout" \
+  -d '{"name":"dev","project":"checkout-service"}' \
+  localhost:8878/api/environments
+```
+
+Once it exists, submit requests into it with the scoped routes instead of the flat ones:
+
+```bash
+curl -X POST -H "Authorization: Bearer demo-key-checkout" \
+  -d '{"name":"my-db","spec":{"size":"1Gi"}}' \
+  localhost:8878/api/projects/checkout-service/environments/dev/promises/database/requests
+```
+
+That request lands in namespace `project-checkout-service-dev`, not `team-checkout` - the flat
+routes remain the default for everything that doesn't opt into a project/environment.
 
 ### Marketplace metadata convention
 
@@ -196,7 +246,10 @@ all three as the reference example.
 `ui/` is a [shadcn/ui](https://ui.shadcn.com) frontend (Vite + React +
 TypeScript) for the broker: sign in with a team's API key, browse the
 catalog, submit requests through a form generated from each Promise's
-schema, and track their status.
+schema, and track their status. A **Projects** page lets a team manage its
+own Projects and Environments, and the request form on each service's page
+gains a target selector to submit into one of them instead of the team's
+flat default namespace.
 
 ```bash
 make ui-install   # once

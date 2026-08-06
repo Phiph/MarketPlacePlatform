@@ -29,6 +29,21 @@ func TestNamespace(t *testing.T) {
 	}
 }
 
+func TestProjectEnvironmentNamespace(t *testing.T) {
+	cases := []struct {
+		project, environment, want string
+	}{
+		{"checkout-service", "dev", "project-checkout-service-dev"},
+		{"checkout-service", "prod", "project-checkout-service-prod"},
+	}
+
+	for _, tc := range cases {
+		if got := ProjectEnvironmentNamespace(tc.project, tc.environment); got != tc.want {
+			t.Errorf("ProjectEnvironmentNamespace(%q, %q) = %q, want %q", tc.project, tc.environment, got, tc.want)
+		}
+	}
+}
+
 func TestLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "teams.yaml")
 	data := `
@@ -71,5 +86,50 @@ businessUnits:
 
 	if _, ok := dir.Resolve("no-such-key"); ok {
 		t.Error("Resolve(unknown key): got ok=true, want false")
+	}
+}
+
+func TestDirectoryBusinessUnit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "teams.yaml")
+	data := `
+businessUnits:
+  platform-org:
+    teams:
+      payments: demo-key-payments
+      checkout: demo-key-checkout
+  other-org:
+    teams:
+      support: demo-key-support
+`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("writing teams file: %v", err)
+	}
+
+	dir, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cases := []struct {
+		team   string
+		wantBU string
+	}{
+		{"payments", "platform-org"},
+		{"checkout", "platform-org"},
+		{"support", "other-org"},
+	}
+	for _, tc := range cases {
+		bu, ok := dir.BusinessUnit(tc.team)
+		if !ok {
+			t.Errorf("BusinessUnit(%q): not found", tc.team)
+			continue
+		}
+		if bu != tc.wantBU {
+			t.Errorf("BusinessUnit(%q) = %q, want %q", tc.team, bu, tc.wantBU)
+		}
+	}
+
+	if _, ok := dir.BusinessUnit("no-such-team"); ok {
+		t.Error("BusinessUnit(unknown team): got ok=true, want false")
 	}
 }

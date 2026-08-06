@@ -1,0 +1,96 @@
+apiVersion: platform.kratix.io/v1alpha1
+kind: Promise
+metadata:
+  creationTimestamp: null
+  labels:
+    kratix.io/promise-version: v0.1.0
+    marketplace.kratix.io/visible: "false"
+  annotations:
+    marketplace.kratix.io/display-name: Environment
+    marketplace.kratix.io/description: >-
+      Provisions one environment (dev/staging/prod/...) of a Project as its
+      own namespace. Self-served through the broker's dedicated
+      `POST /api/environments` endpoint, not the generic ad-hoc catalog or a
+      raw `kubectl apply` - see README.md for why.
+  name: environment
+spec:
+  # Same reasoning as promises/team/promise.yaml: the output Namespace has to
+  # land on the platform cluster, since that's where Capsule's webhooks and
+  # the marketplace broker run.
+  destinationSelectors:
+  - matchLabels:
+      environment: platform
+  api:
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      creationTimestamp: null
+      name: environments.demo.kratix.io
+    spec:
+      group: demo.kratix.io
+      names:
+        kind: Environment
+        plural: environments
+        singular: environment
+      scope: Namespaced
+      versions:
+      - name: v1alpha1
+        schema:
+          openAPIV3Schema:
+            properties:
+              spec:
+                properties:
+                  project:
+                    type: string
+                    description: >-
+                      Name of the Project (see the `project` Promise) this
+                      environment belongs to. Must already exist in the same
+                      namespace.
+                  team:
+                    type: string
+                    description: >-
+                      Name of the owning team. BROKER-OWNED: the broker's
+                      POST /api/environments endpoint always sets this from
+                      the authenticated caller and ignores any value supplied
+                      here - a hand-set value that doesn't match the caller
+                      would bind this environment's namespace RBAC to the
+                      wrong team's Group. Only present in the schema because
+                      Capsule needs it as a real label value at apply time;
+                      treat it as read-only outside the broker.
+                  businessUnit:
+                    type: string
+                    description: >-
+                      Name of the owning BusinessUnit's Capsule Tenant.
+                      BROKER-OWNED, same as `team` above - set from the
+                      authenticated caller's own business unit, never from
+                      caller input.
+                required:
+                - project
+                - team
+                - businessUnit
+                type: object
+            type: object
+        served: true
+        storage: true
+    status:
+      acceptedNames:
+        kind: ""
+        plural: ""
+      conditions: null
+      storedVersions: null
+  workflows:
+    config: {}
+    resource:
+      configure:
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: Pipeline
+        metadata:
+          name: environment-configure
+        spec:
+          containers:
+          - image: kratix-guide/environment-resource-pipeline:v0.1.0
+            name: kratix-guide-environment-resource-pipeline
+status:
+  workflows: 0
+  workflowsFailed: 0
+  workflowsSucceeded: 0

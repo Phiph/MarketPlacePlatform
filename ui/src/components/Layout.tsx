@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { to: '/catalog', label: 'Catalog' },
   { to: '/requests', label: 'My Requests' },
+  { to: '/projects', label: 'Projects' },
 ]
 
 export function Layout() {

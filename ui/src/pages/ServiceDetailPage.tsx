@@ -10,14 +10,31 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SchemaForm } from '@/components/SchemaForm'
 import { RequestsTable } from '@/components/RequestsTable'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
 import { usePolling } from '@/lib/use-polling'
-import type { CatalogEntry, ResourceRequest } from '@/lib/types'
+import type { CatalogEntry, Environment, ResourceRequest } from '@/lib/types'
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+
+// The <Select>'s own value space can't represent "nothing chosen" with an
+// empty string (Radix reserves that), so a sentinel stands in for "submit
+// into the team's flat default namespace" - keeps behavior byte-for-byte
+// unchanged from before targets existed.
+const DEFAULT_TARGET = '__team-default__'
+
+function encodeTarget(project: string, environment: string) {
+  return `${project}::${environment}`
+}
+
+function decodeTarget(value: string): { project: string; environment: string } | null {
+  if (value === DEFAULT_TARGET) return null
+  const [project, environment] = value.split('::')
+  return project && environment ? { project, environment } : null
+}
 
 export function ServiceDetailPage() {
   const { name = '' } = useParams()
@@ -35,14 +52,37 @@ export function ServiceDetailPage() {
   const [spec, setSpec] = useState<Record<string, unknown>>({})
   const [submitting, setSubmitting] = useState(false)
 
+  // project -> its environment names, for the target selector. Loaded once
+  // from the team's full environment list (already scoped to the team by
+  // the broker) rather than per-project, to avoid an N+1 fan-out.
+  const [environmentsByProject, setEnvironmentsByProject] = useState<Record<string, string[]>>({})
+  const [targetValue, setTargetValue] = useState(DEFAULT_TARGET)
+  const target = decodeTarget(targetValue)
+
+  useEffect(() => {
+    if (!session) return
+    api
+      .listEnvironments(session.apiKey)
+      .then((envs: Environment[]) => {
+        const grouped: Record<string, string[]> = {}
+        for (const env of envs) {
+          const project = env.spec?.project
+          if (!project) continue
+          ;(grouped[project] ??= []).push(env.metadata.name)
+        }
+        setEnvironmentsByProject(grouped)
+      })
+      .catch(() => setEnvironmentsByProject({}))
+  }, [session])
+
   const loadRequests = useCallback(() => {
     if (!session) return
     setRequestsError(null)
-    api
-      .listRequests(session.apiKey, name)
-      .then(setRequests)
-      .catch((err) => setRequestsError(err instanceof Error ? err.message : 'Failed to load requests'))
-  }, [session, name])
+    const call = target
+      ? api.listScopedRequests(session.apiKey, target.project, target.environment, name)
+      : api.listRequests(session.apiKey, name)
+    call.then(setRequests).catch((err) => setRequestsError(err instanceof Error ? err.message : 'Failed to load requests'))
+  }, [session, name, target?.project, target?.environment])
 
   useEffect(() => {
     if (!session) return
@@ -55,7 +95,7 @@ export function ServiceDetailPage() {
 
   // Provisioning happens asynchronously on the cluster, so poll for status
   // updates rather than requiring a manual refresh.
-  usePolling(loadRequests, 5000, [session, name])
+  usePolling(loadRequests, 5000, [session, name, targetValue])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -68,7 +108,11 @@ export function ServiceDetailPage() {
 
     setSubmitting(true)
     try {
-      await api.submitRequest(session.apiKey, name, requestName, spec)
+      if (target) {
+        await api.submitScopedRequest(session.apiKey, target.project, target.environment, name, requestName, spec)
+      } else {
+        await api.submitRequest(session.apiKey, name, requestName, spec)
+      }
       toast.success(`Request "${requestName}" submitted`)
       setRequestName('')
       setSpec({})
@@ -88,7 +132,11 @@ export function ServiceDetailPage() {
     if (!session) return
     setDeletingName(reqName)
     try {
-      await api.deleteRequest(session.apiKey, name, reqName)
+      if (target) {
+        await api.deleteScopedRequest(session.apiKey, target.project, target.environment, name, reqName)
+      } else {
+        await api.deleteRequest(session.apiKey, name, reqName)
+      }
       toast.success(`Deleted "${reqName}"`)
       loadRequests()
     } catch (err) {
@@ -124,6 +172,7 @@ export function ServiceDetailPage() {
   }
 
   const specSchema = entry.schema?.properties?.spec
+  const projectNames = Object.keys(environmentsByProject).sort()
 
   return (
     <div className="space-y-6">
@@ -140,6 +189,33 @@ export function ServiceDetailPage() {
         <p className="mt-1 text-muted-foreground">{entry.description || 'No description provided.'}</p>
       </div>
 
+      <div className="max-w-xs space-y-1.5">
+        <Label htmlFor="target-select">Target</Label>
+        <Select value={targetValue} onValueChange={setTargetValue}>
+          <SelectTrigger id="target-select" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={DEFAULT_TARGET}>Team default ({session?.team})</SelectItem>
+            {projectNames.map((project) => (
+              <SelectGroup key={project}>
+                <SelectLabel>{project}</SelectLabel>
+                {environmentsByProject[project].map((environment) => (
+                  <SelectItem key={environment} value={encodeTarget(project, environment)}>
+                    {project} / {environment}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {target
+            ? `Requests land in project-${target.project}-${target.environment}.`
+            : `Requests land in ${session?.team}'s default namespace. Manage projects/environments from the Projects page.`}
+        </p>
+      </div>
+
       <Tabs defaultValue="request">
         <TabsList>
           <TabsTrigger value="request">New request</TabsTrigger>
@@ -152,7 +228,10 @@ export function ServiceDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Request {entry.displayName}</CardTitle>
-              <CardDescription>Fill in the details below to submit a new request as {session?.team}.</CardDescription>
+              <CardDescription>
+                Fill in the details below to submit a new request as {session?.team}
+                {target ? ` into ${target.project} / ${target.environment}` : ''}.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form className="space-y-4" onSubmit={handleSubmit}>
@@ -192,7 +271,8 @@ export function ServiceDetailPage() {
 
           {requests && requests.length === 0 && (
             <div className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
-              No requests yet for {entry.displayName}. Submit one from the "New request" tab.
+              No requests yet for {entry.displayName}
+              {target ? ` in ${target.project} / ${target.environment}` : ''}. Submit one from the "New request" tab.
             </div>
           )}
 
