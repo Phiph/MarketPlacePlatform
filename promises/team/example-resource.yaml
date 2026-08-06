@@ -1,0 +1,9 @@
+# businessUnit must reference an already-provisioned BusinessUnit (see
+# promises/business-unit/example-resource.yaml - name "platform-org").
+apiVersion: demo.kratix.io/v1alpha1
+kind: Team
+metadata:
+  name: payments
+  namespace: default
+spec:
+  businessUnit: platform-org

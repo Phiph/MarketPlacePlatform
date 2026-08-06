@@ -1,0 +1,11 @@
+apiVersion: demo.kratix.io/v1alpha1
+kind: BusinessUnit
+metadata:
+  name: platform-org
+  namespace: default
+spec:
+  namespaceQuota: 5
+  resourceQuotas:
+    cpu: "20"
+    memory: "40Gi"
+    pods: "100"

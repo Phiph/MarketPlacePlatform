@@ -1,0 +1,25 @@
+# Kubernetes' built-in `admin`/`edit` ClusterRoles are *aggregated* - they
+# only include rules from other ClusterRoles explicitly labeled
+# rbac.authorization.k8s.io/aggregate-to-{admin,edit}: "true" (a native RBAC
+# mechanism, unrelated to Capsule). Every team gets bound to ClusterRole/edit
+# in its own namespace by the shared GlobalTenantResource (see
+# team-rbac.yaml in this directory), but Kratix's own per-Promise ClusterRole
+# (e.g. `database-promise-controller`, scoped to demo.kratix.io/databases)
+# is meant for Kratix's own controller/pipeline ServiceAccount and isn't
+# labeled for aggregation - so without this, teams have zero RBAC on any
+# Promise's CRD, and every broker call 403s. This aggregates CRUD on the
+# whole demo.kratix.io API group (the convention every Promise in this repo
+# uses, per promises/database's and promises/business-unit's own
+# promise.yaml) into admin/edit, covering every current and future Promise
+# under that group with one rule.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: marketplace-tenant-resources
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["demo.kratix.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

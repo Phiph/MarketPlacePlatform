@@ -13,8 +13,8 @@ import { api, ApiError } from '@/lib/api'
 // Demo-only shortcuts matching broker/config/teams.yaml, documented in the
 // repo README - not a real secret, just a convenience for local dev.
 const DEMO_TEAMS = [
-  { team: 'team-payments', apiKey: 'demo-key-payments' },
-  { team: 'team-checkout', apiKey: 'demo-key-checkout' },
+  { team: 'payments', apiKey: 'demo-key-payments' },
+  { team: 'checkout', apiKey: 'demo-key-checkout' },
 ]
 
 export function LoginPage() {
@@ -67,7 +67,7 @@ export function LoginPage() {
               <Label htmlFor="team">Team</Label>
               <Input
                 id="team"
-                placeholder="team-payments"
+                placeholder="payments"
                 value={team}
                 onChange={(e) => setTeam(e.target.value)}
                 autoComplete="username"

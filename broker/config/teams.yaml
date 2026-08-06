@@ -1,8 +1,25 @@
-# DEMO-ONLY auth: a static map of team name -> API key. Callers authenticate
-# with `Authorization: Bearer <key>`, and the broker treats them as that team
-# for the rest of the request (namespace-per-team isolation, see
-# internal/tenant). There is no real authn here (no OIDC/SSO, no rotation,
-# keys in plaintext) - fine for a local kind cluster, not a real platform.
-teams:
-  team-payments: demo-key-payments
-  team-checkout: demo-key-checkout
+# DEMO-ONLY auth: a static map of team name -> API key, grouped by business
+# unit. Callers authenticate with `Authorization: Bearer <key>`, and the
+# broker treats them as that team for the rest of the request. There is no
+# real authn here (no OIDC/SSO, no rotation, keys in plaintext) - fine for a
+# local kind cluster, not a real platform.
+#
+# What a team name here gets you is defined by two Kratix Promises +
+# Capsule (https://projectcapsule.dev), not this file: each business unit
+# needs a BusinessUnit request (promises/business-unit/), and each team
+# under it needs a Team request referencing it (promises/team/) -
+# `make broker-provision-teams` submits both, one BusinessUnit per key
+# below plus one Team per entry in its teams map - before a team can make
+# any broker call. internal/tenant.Group()/Namespace() compute the
+# Kubernetes Group/namespace Capsule's GlobalTenantResource then enforces;
+# the business unit itself only matters for provisioning (which Tenant a
+# team's namespace request should reference), not for request-time auth.
+#
+# Both teams below share one business unit deliberately - that's what
+# exercises the interesting case: two teams isolated from each other despite
+# belonging to the same Capsule Tenant.
+businessUnits:
+  platform-org:
+    teams:
+      payments: demo-key-payments
+      checkout: demo-key-checkout

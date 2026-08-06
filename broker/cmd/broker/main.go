@@ -42,7 +42,7 @@ func main() {
 		log.Fatalf("building Kubernetes clients: %v", err)
 	}
 
-	server := api.New(clients.Dynamic, clients.Typed, dir, corsOrigin)
+	server := api.New(clients, dir, corsOrigin)
 
 	log.Printf("marketplace broker listening on %s", addr)
 	if err := http.ListenAndServe(addr, server.Handler()); err != nil {

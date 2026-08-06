@@ -1,0 +1,50 @@
+# The mechanism that makes "business unit = one Capsule Tenant, teams =
+# separately-isolated namespaces inside it" actually work. Capsule's own
+# Tenant.spec.owners model grants every owner equal access to every
+# namespace in the Tenant - fine when a Tenant belongs to exactly one team
+# (the earlier, flat design), wrong once multiple teams share a BU's Tenant.
+# businessunit-configure's pipeline deliberately leaves `owners` empty for
+# that reason (see its pipeline.py) - this GlobalTenantResource is what
+# grants access instead, and it does so per-namespace, not per-Tenant.
+#
+# scope: Namespace means the template below renders once per namespace
+# (not once per Tenant) across every Tenant matched by tenantSelector, with
+# that one namespace's own object available as `$.namespace` - so each
+# rendered RoleBinding's subject Group is derived from *that namespace's*
+# marketplace.kratix.io/team label, not from anything Tenant-wide. A team's
+# Namespace only ever gets a RoleBinding scoped to its own namespace, never
+# its BU-mates'.
+#
+# ClusterRole "edit" here (not "admin") deliberately excludes RBAC
+# management itself (Roles/RoleBindings) - a team can create/manage
+# resources in its own namespace but can't grant itself broader access.
+# Combined with marketplace-rbac.yaml's aggregation, "edit" already includes
+# CRUD on demo.kratix.io (every Promise's CRDs), not just core resources.
+apiVersion: capsule.clastix.io/v1beta2
+kind: GlobalTenantResource
+metadata:
+  name: team-namespace-rbac
+spec:
+  scope: Namespace
+  resyncPeriod: 60s
+  tenantSelector:
+    matchLabels:
+      marketplace.kratix.io/managed: "true"
+  resources:
+    - generators:
+        - missingKey: error
+          template: |
+            ---
+            apiVersion: rbac.authorization.k8s.io/v1
+            kind: RoleBinding
+            metadata:
+              name: marketplace-team-access
+              namespace: {{ $.namespace.metadata.name }}
+            subjects:
+              - kind: Group
+                name: "marketplace:team-{{ index $.namespace.metadata.labels "marketplace.kratix.io/team" }}"
+                apiGroup: rbac.authorization.k8s.io
+            roleRef:
+              kind: ClusterRole
+              name: edit
+              apiGroup: rbac.authorization.k8s.io

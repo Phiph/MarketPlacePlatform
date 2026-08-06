@@ -1,0 +1,7 @@
+# `helm template` doesn't render this - it's normally created by `helm
+# install --create-namespace`, which this Promise's static-copy delivery
+# pattern doesn't run. Added by hand.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capsule-system

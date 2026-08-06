@@ -30,7 +30,7 @@ default, so no `.env` is needed; set `BROKER_URL` (unprefixed) when starting
 browser instead of through the proxy.
 
 Sign in with one of the demo teams shown on the login screen
-(`team-payments` / `demo-key-payments` or `team-checkout` /
+(`payments` / `demo-key-payments` or `checkout` /
 `demo-key-checkout`), or your own team's key from `broker/config/teams.yaml`.
 
 ## Running against the mock broker

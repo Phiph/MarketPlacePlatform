@@ -1,37 +1,56 @@
-// Package tenant maps API callers to teams, and teams to their own
-// Kubernetes namespace. Auth here is a static API-key lookup - a stand-in
-// for real authn (OIDC/SSO) appropriate for a local demo, not production.
+// Package tenant maps API callers to teams, and teams to their namespace and
+// Kubernetes Group naming convention. Auth here is a static API-key lookup -
+// a stand-in for real authn (OIDC/SSO) appropriate for a local demo, not
+// production.
+//
+// Provisioning is two separate Kratix Promises, submitted in order:
+//   - business-unit (promises/business-unit/) - a Capsule
+//     (https://projectcapsule.dev) Tenant with resource quotas. Its owners
+//     are deliberately left empty: Capsule's owner model grants every owner
+//     equal access to every namespace in the Tenant, which would let one
+//     team see every other team sharing its business unit.
+//   - team (promises/team/) - a Namespace inside an existing business
+//     unit's Tenant, labeled with the team's name. A single, always-installed
+//     GlobalTenantResource (see
+//     promises/business-unit/workflows/promise/configure/dependencies/configure-deps/resources/team-rbac.yaml)
+//     is what actually grants access: it watches every business-unit Tenant
+//     and, per namespace, binds that one namespace's own team Group to it -
+//     never to its business-unit-mates'.
+//
+// Both this package's Namespace() and Group() must stay byte-for-byte in
+// sync with the naming those two pipelines compute - see the comments on
+// each.
 package tenant
 
 import (
-	"context"
 	"fmt"
 	"os"
 
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
 )
-
-// LabelTeam marks a namespace as belonging to a team, so EnsureNamespace
-// can tell "already exists and is ours" apart from "name collides with
-// something else."
-const LabelTeam = "marketplace.kratix.io/team"
 
 // Directory resolves API keys to teams, loaded once at startup from a
 // teams.yaml file shaped like:
 //
-//	teams:
-//	  team-payments: "demo-key-payments"
-//	  team-checkout: "demo-key-checkout"
+//	businessUnits:
+//	  platform-org:
+//	    teams:
+//	      payments: "demo-key-payments"
+//	      checkout: "demo-key-checkout"
+//
+// The business unit a team belongs to only matters at provisioning time
+// (which business-unit's Tenant a team's namespace request should reference)
+// - once a team's namespace and RBAC exist, request handling only ever
+// needs the team name, so Directory discards the business-unit grouping
+// after Load.
 type Directory struct {
 	teamByAPIKey map[string]string
 }
 
 type directoryFile struct {
-	Teams map[string]string `json:"teams"`
+	BusinessUnits map[string]struct {
+		Teams map[string]string `json:"teams"`
+	} `json:"businessUnits"`
 }
 
 // Load reads a Directory from a teams.yaml file at path.
@@ -46,12 +65,14 @@ func Load(path string) (*Directory, error) {
 		return nil, fmt.Errorf("parsing teams file %q: %w", path, err)
 	}
 
-	teamByAPIKey := make(map[string]string, len(file.Teams))
-	for team, apiKey := range file.Teams {
-		if team == "" || apiKey == "" {
-			continue
+	teamByAPIKey := make(map[string]string)
+	for _, bu := range file.BusinessUnits {
+		for team, apiKey := range bu.Teams {
+			if team == "" || apiKey == "" {
+				continue
+			}
+			teamByAPIKey[apiKey] = team
 		}
-		teamByAPIKey[apiKey] = team
 	}
 
 	return &Directory{teamByAPIKey: teamByAPIKey}, nil
@@ -65,33 +86,25 @@ func (d *Directory) Resolve(apiKey string) (team string, ok bool) {
 
 // Namespace returns the Kubernetes namespace a team's resource requests live
 // in. Namespace names are DNS labels, so team names must already be valid
-// ones (teams.yaml is operator-controlled, not user input).
+// ones (teams.yaml is operator-controlled, not user input). Provisioned by
+// the team Promise (promises/team/), not this package - by the time a team
+// can authenticate at all, its namespace should already exist.
 func Namespace(team string) string {
 	return "team-" + team
 }
 
-// EnsureNamespace gets or creates the namespace for a team, labeling it so
-// it's identifiable as the broker's own.
-func EnsureNamespace(ctx context.Context, client kubernetes.Interface, team string) (string, error) {
-	ns := Namespace(team)
+// GroupPrefix namespaces the Kubernetes Group every impersonated broker
+// call carries, so it can't collide with unrelated Groups a real IdP might
+// hand out.
+const GroupPrefix = "marketplace:team-"
 
-	_, err := client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
-	if err == nil {
-		return ns, nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return "", fmt.Errorf("getting namespace %q: %w", ns, err)
-	}
-
-	_, err = client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   ns,
-			Labels: map[string]string{LabelTeam: team},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		return "", fmt.Errorf("creating namespace %q: %w", ns, err)
-	}
-
-	return ns, nil
+// Group returns the Kubernetes Group that the shared GlobalTenantResource
+// binds to a team's namespace (see the package doc), and that the broker
+// impersonates for every call it makes on that team's behalf. This is the
+// naming convention's single source of truth on the Go side -
+// promises/business-unit's team-rbac.yaml template must compute the
+// identical string from the same namespace's marketplace.kratix.io/team
+// label.
+func Group(team string) string {
+	return GroupPrefix + team
 }
