@@ -65,9 +65,10 @@ func (s *Server) Handler() http.Handler {
 	// server-side rather than forwarding the request body, since
 	// spec.team/spec.businessUnit are RBAC-relevant - see
 	// promises/environment/README.md, "Why team/businessUnit are
-	// broker-owned fields". Everything else about an Environment (get,
-	// list, delete) is identity-insensitive and rides the generic
-	// /promises/environment/requests routes above untouched.
+	// broker-owned fields". doSubmitRequest refuses to create an
+	// environment via the generic routes above for the same reason;
+	// get/list/delete are identity-insensitive and still ride them
+	// untouched.
 	apiMux.HandleFunc("POST /environments", s.createEnvironment)
 
 	handler := http.Handler(apiMux)
@@ -135,6 +136,18 @@ func (s *Server) submitScopedRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) doSubmitRequest(w http.ResponseWriter, r *http.Request, entry catalog.Entry, team, namespace string) {
+	// environment is the one Promise whose spec carries broker-owned,
+	// RBAC-relevant fields (team/businessUnit - see createEnvironment).
+	// Those are only safe because createEnvironment composes them from the
+	// authenticated caller instead of the request body; this generic path
+	// forwards body.Spec verbatim, so it must not be allowed to create an
+	// Environment at all, or a caller could hand-set team/businessUnit to
+	// someone else's and have the pipeline label a new namespace with them.
+	if entry.Name == "environment" {
+		writeError(w, http.StatusForbidden, "environment requests can't be created via this endpoint; use POST /environments")
+		return
+	}
+
 	var body struct {
 		Name string                 `json:"name"`
 		Spec map[string]interface{} `json:"spec"`
