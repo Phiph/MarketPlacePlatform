@@ -8,6 +8,8 @@ import { LoginPage } from '@/pages/LoginPage'
 import { CatalogPage } from '@/pages/CatalogPage'
 import { ServiceDetailPage } from '@/pages/ServiceDetailPage'
 import { RequestsPage } from '@/pages/RequestsPage'
+import { ProjectsPage } from '@/pages/ProjectsPage'
+import { ProjectDetailPage } from '@/pages/ProjectDetailPage'
 
 function App() {
   return (
@@ -21,6 +23,8 @@ function App() {
                 <Route path="/catalog" element={<CatalogPage />} />
                 <Route path="/catalog/:name" element={<ServiceDetailPage />} />
                 <Route path="/requests" element={<RequestsPage />} />
+                <Route path="/projects" element={<ProjectsPage />} />
+                <Route path="/projects/:project" element={<ProjectDetailPage />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/catalog" replace />} />

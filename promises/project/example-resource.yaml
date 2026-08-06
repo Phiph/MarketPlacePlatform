@@ -1,0 +1,7 @@
+apiVersion: demo.kratix.io/v1alpha1
+kind: Project
+metadata:
+  name: checkout-service
+  namespace: team-checkout
+spec:
+  description: Checkout's own services, grouped across dev/staging/prod.

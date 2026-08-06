@@ -95,11 +95,76 @@ const PROMISES = [
       },
     },
   },
+  // Mirrors promises/project/promise.yaml. Not self-served through the
+  // generic catalog (visible: false) - the UI's Projects page hits these
+  // same generic /promises/project/requests routes directly by name.
+  {
+    name: 'project',
+    displayName: 'Project',
+    description: 'A logical grouping of environments owned by one team.',
+    visible: false,
+    group: 'demo.kratix.io',
+    version: 'v1alpha1',
+    kind: 'Project',
+    plural: 'projects',
+    scope: 'Namespaced',
+    schema: {
+      type: 'object',
+      properties: {
+        spec: {
+          type: 'object',
+          properties: {
+            description: { type: 'string', description: 'Optional human-readable description of this project.' },
+          },
+        },
+      },
+    },
+  },
+  // Mirrors promises/environment/promise.yaml. Creation always goes
+  // through POST /environments below, never this generic route - see that
+  // handler for why.
+  {
+    name: 'environment',
+    displayName: 'Environment',
+    description: 'Provisions one environment (dev/staging/prod/...) of a Project as its own namespace.',
+    visible: false,
+    group: 'demo.kratix.io',
+    version: 'v1alpha1',
+    kind: 'Environment',
+    plural: 'environments',
+    scope: 'Namespaced',
+    schema: {
+      type: 'object',
+      properties: {
+        spec: {
+          type: 'object',
+          required: ['project', 'team', 'businessUnit'],
+          properties: {
+            project: { type: 'string' },
+            team: { type: 'string' },
+            businessUnit: { type: 'string' },
+          },
+        },
+      },
+    },
+  },
 ]
+
+// Mirrors broker/config/teams.yaml's businessUnits grouping - needed to
+// compose an Environment's spec.businessUnit the same way the real
+// broker's POST /environments does.
+const BUSINESS_UNIT_BY_TEAM = { payments: 'platform-org', checkout: 'platform-org' }
 
 // requests[team][promiseName][requestName] = resource object
 const requests = {}
 for (const team of Object.values(TEAMS)) requests[team] = {}
+
+// Scoped equivalent of `requests` above, for the
+// /projects/{project}/environments/{environment}/promises/{name}/requests
+// routes:
+// scopedRequests[team][project][environment][promiseName][requestName]
+const scopedRequests = {}
+for (const team of Object.values(TEAMS)) scopedRequests[team] = {}
 
 function findPromise(name) {
   return PROMISES.find((p) => p.name === name)
@@ -224,6 +289,106 @@ const server = createServer(async (req, res) => {
         if (!bucket[reqName]) return send(res, 404, { error: `no such request: ${reqName}` })
         delete bucket[reqName]
         return send(res, 204)
+      }
+    }
+
+    // POST /api/environments - the one dedicated endpoint, mirroring
+    // broker/internal/api/server.go's createEnvironment: composes
+    // spec.team/spec.businessUnit itself rather than trusting the request
+    // body, since those become RBAC-relevant on the real broker (see
+    // promises/environment/README.md). The mock has no real RBAC to
+    // protect, but keeps the same contract so the UI can't tell the
+    // difference.
+    if (resource === 'environments' && !name && req.method === 'POST') {
+      const body = await readBody(req)
+      if (!body.name) return send(res, 400, { error: '"name" is required' })
+      if (!body.project) return send(res, 400, { error: '"project" is required' })
+
+      if (!requests[team].project?.[body.project]) {
+        return send(res, 404, { error: `no such project: ${body.project}` })
+      }
+
+      requests[team].environment ??= {}
+      if (requests[team].environment[body.name]) {
+        return send(res, 409, { error: `a request named ${body.name} already exists` })
+      }
+
+      const entry = findPromise('environment')
+      const resourceObj = {
+        apiVersion: `${entry.group}/${entry.version}`,
+        kind: entry.kind,
+        metadata: { name: body.name, namespace: `team-${team}`, creationTimestamp: new Date().toISOString() },
+        spec: { project: body.project, team, businessUnit: BUSINESS_UNIT_BY_TEAM[team] },
+        // team is part of the namespace name, not just project/environment -
+        // see tenant.ProjectEnvironmentNamespace()'s doc comment on the real
+        // broker: two teams naming a project+environment identically would
+        // otherwise collide on one real Namespace.
+        status: { namespace: `project-${team}-${body.project}-${body.name}` },
+      }
+      requests[team].environment[body.name] = resourceObj
+      simulateProgress(resourceObj)
+      return send(res, 201, resourceObj)
+    }
+
+    // /api/projects/{project}/environments/{environment}/promises/{name}/requests[/{reqName}]
+    // - scoped equivalent of the flat /api/promises/{name}/requests routes
+    // above, landing in a project's environment namespace instead of the
+    // team's flat default one. No ownership check on {project}/{environment}
+    // here, mirroring the real broker's server.go comment: it's Kubernetes
+    // RBAC that enforces that boundary for real, not a broker-side string
+    // comparison - the mock just has nothing to enforce it with, so any
+    // authenticated team can address any project/environment pair here.
+    if (resource === 'projects') {
+      const project = parts[2]
+      const environment = parts[3] === 'environments' ? parts[4] : undefined
+      const promiseName = parts[5] === 'promises' ? parts[6] : undefined
+      const scopedReqName = parts[7] === 'requests' ? parts[8] : undefined
+
+      if (!project || !environment || !promiseName || parts[7] !== 'requests') {
+        return send(res, 404, { error: 'not found' })
+      }
+
+      const entry = findPromise(promiseName)
+      if (!entry) return send(res, 404, { error: `no such promise: ${promiseName}` })
+
+      scopedRequests[team][project] ??= {}
+      scopedRequests[team][project][environment] ??= {}
+      scopedRequests[team][project][environment][promiseName] ??= {}
+      const bucket = scopedRequests[team][project][environment][promiseName]
+
+      if (!scopedReqName) {
+        if (req.method === 'GET') return send(res, 200, Object.values(bucket))
+
+        if (req.method === 'POST') {
+          const body = await readBody(req)
+          if (!body.name) return send(res, 400, { error: '"name" is required' })
+          if (bucket[body.name]) return send(res, 409, { error: `a request named ${body.name} already exists` })
+          const resourceObj = {
+            apiVersion: `${entry.group}/${entry.version}`,
+            kind: entry.kind,
+            metadata: {
+              name: body.name,
+              namespace: `project-${team}-${project}-${environment}`,
+              creationTimestamp: new Date().toISOString(),
+            },
+            spec: body.spec ?? {},
+            status: {},
+          }
+          bucket[body.name] = resourceObj
+          simulateProgress(resourceObj)
+          return send(res, 201, resourceObj)
+        }
+      } else {
+        if (req.method === 'GET') {
+          if (!bucket[scopedReqName]) return send(res, 404, { error: `no such request: ${scopedReqName}` })
+          return send(res, 200, bucket[scopedReqName])
+        }
+
+        if (req.method === 'DELETE') {
+          if (!bucket[scopedReqName]) return send(res, 404, { error: `no such request: ${scopedReqName}` })
+          delete bucket[scopedReqName]
+          return send(res, 204)
+        }
       }
     }
 

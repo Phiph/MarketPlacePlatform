@@ -190,25 +190,14 @@ kubectl --context kind-platform delete businessunit platform-org
 kubectl --context kind-platform apply -f promises/business-unit/example-resource.yaml
 ```
 
-## Future direction: Projects (not built yet)
+## Team -> Projects -> Environments
 
-Recorded here so the shape below doesn't get designed away by accident, but deliberately not
-implemented until there's a real need for it:
-
-**Team -> Projects -> Environments.** A team can own multiple **Projects** (a project belongs
-to exactly one team, and therefore to that team's business unit). Each project can have
-multiple **Environments** (`dev`, `staging`, `prod`, ...), and each environment is its own
-deployable namespace that Promise resource requests land in - so a project isn't a single
-namespace, it's a *set* of namespaces (one per environment), all traceable back to the one
-team that owns the project.
-
-This changes what "the namespace a request lives in" means: today it's `team-<name>`
-(one-to-one with a team); under this model it'd be `project-<project>-<environment>` (or
-similar), with the *owning team* recorded as metadata/labels rather than encoded directly in
-the namespace name. RBAC-wise, nothing about the BU/Team mechanism above needs to change to
-support this later - `GlobalTenantResource`'s per-namespace templating (see above) would just
-read a `marketplace.kratix.io/team` label the same way it does today; it doesn't care whether
-that namespace is named after a team directly or after one of that team's project's
-environments. The broker's request-routing (which namespace a call resolves to) and the
-catalog/UI (team -> its projects -> a project's environments) are where the real work would
-land, not the Capsule/RBAC layer.
+The layer this README used to sketch as "future direction" is now built: a team can own
+multiple **Projects** (`promises/project/`), each with multiple **Environments**
+(`promises/environment/`) - `dev`, `staging`, `prod`, ... - and each environment is its own
+deployable namespace (`project-<team>-<project>-<environment>`) that Promise resource requests land
+in, traceable back to the owning team via the same `marketplace.kratix.io/team` label this
+README describes above. As predicted, the Capsule/RBAC mechanism above needed zero changes to
+support it - see `promises/environment/README.md` for how. The real work landed in the broker's
+request-routing and the UI instead; see the root `README.md`'s "Marketplace broker API"
+section for the endpoints.
