@@ -12,6 +12,12 @@ metadata:
       Tenant. Operator/day-2 only - not self-served through the catalog.
   name: team
 spec:
+  # A Team's spec.businessUnit references a BusinessUnit by name (see the
+  # schema below), so this Promise can't be installed without business-unit
+  # already present - requiredPromises enforces that at install time.
+  requiredPromises:
+  - name: business-unit
+    version: v0.2.0
   # See promises/business-unit/promise.yaml for why this selector - same
   # platform-cluster reasoning applies here.
   destinationSelectors:
