@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -167,10 +168,10 @@ func parseEntry(obj *unstructured.Unstructured) (Entry, bool) {
 		displayName = name
 	}
 
-	owner := obj.GetAnnotations()[AnnotationOwner]
-	lifecycle := obj.GetAnnotations()[AnnotationLifecycle]
-	support := obj.GetAnnotations()[AnnotationSupport]
-	policy := obj.GetAnnotations()[AnnotationPolicy]
+	owner := strings.TrimSpace(obj.GetAnnotations()[AnnotationOwner])
+	lifecycle := strings.TrimSpace(obj.GetAnnotations()[AnnotationLifecycle])
+	support := strings.TrimSpace(obj.GetAnnotations()[AnnotationSupport])
+	policy := strings.TrimSpace(obj.GetAnnotations()[AnnotationPolicy])
 
 	var missing []string
 	if owner == "" {

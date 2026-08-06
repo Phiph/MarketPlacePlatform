@@ -9,7 +9,7 @@ Requesting a `Database` gets you a [Zalando Postgres Operator](https://github.co
 
 **Operational evidence** (see the root `README.md`'s "Marketplace metadata convention"):
 owner `platform-team`, lifecycle `stable`, support `#platform-eng`, policy `confidential` -
-the one Promise here that provisions a place application data actually lands.
+the one Promise here that provisions a place where application data actually lands.
 
 - `promise.yaml` - the `Database` CRD (`demo.kratix.io/v1alpha1`) plus two workflows:
   - **promise workflow** (`workflows/promise/configure/dependencies/configure-deps`) - installs the

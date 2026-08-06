@@ -258,7 +258,11 @@ actor auditing the platform, without anyone walking them through a README.
 every installed Promise's evidence (and, for any gap, a `missingEvidence`
 list naming exactly which annotations are absent or invalid) regardless of
 catalog visibility - the broker doesn't gate this on whether a Promise is
-self-served through the generic catalog.
+self-served through the generic catalog. This covers every Promise that
+exposes a `spec.api` CRD (which every Promise in this repo does, and which
+the catalog mechanism already requires to render a request schema) - a
+dependency-only Promise with no `spec.api` isn't parsed into the catalog at
+all, so it has no queryable evidence either.
 `broker/internal/catalog/evidence_lint_test.go` fails `make broker-test` if
 any checked-in Promise regresses on this.
 

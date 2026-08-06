@@ -184,11 +184,21 @@ func TestParseEntryOperationalEvidenceMissing(t *testing.T) {
 		name        string
 		mutate      func(annotations map[string]interface{})
 		wantMissing []string
+		hidden      bool
 	}{
 		{
 			name:        "all evidence annotations absent",
 			mutate:      func(annotations map[string]interface{}) {},
 			wantMissing: []string{"owner", "lifecycle", "support", "policy"},
+		},
+		{
+			// Evidence must be computed regardless of the visible label -
+			// three of the five real Promises are intentionally
+			// visible=false, and this must not gate evidence computation.
+			name:        "hidden promise, all evidence annotations absent",
+			mutate:      func(annotations map[string]interface{}) {},
+			wantMissing: []string{"owner", "lifecycle", "support", "policy"},
+			hidden:      true,
 		},
 		{
 			name: "owner present, rest absent",
@@ -212,12 +222,18 @@ func TestParseEntryOperationalEvidenceMissing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			obj := databasePromise()
+			if tt.hidden {
+				obj.Object["metadata"].(map[string]interface{})["labels"].(map[string]interface{})[LabelVisible] = "false"
+			}
 			annotations := obj.Object["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})
 			tt.mutate(annotations)
 
 			entry, ok := parseEntry(obj)
 			if !ok {
 				t.Fatalf("expected the fixture to parse")
+			}
+			if entry.Visible != !tt.hidden {
+				t.Errorf("Visible = %v, want %v", entry.Visible, !tt.hidden)
 			}
 			if !reflect.DeepEqual(entry.MissingEvidence, tt.wantMissing) {
 				t.Errorf("MissingEvidence = %v, want %v", entry.MissingEvidence, tt.wantMissing)
