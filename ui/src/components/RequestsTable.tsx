@@ -81,13 +81,12 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind, sche
       </Table>
       <RequestDetailDialog request={selected} open={selected !== null} onOpenChange={(open) => !open && setSelected(null)} />
 
-      {onSaveEdit && (
+      {onSaveEdit && editing && (
         <RequestEditDialog
           request={editing}
-          schema={editing ? schemaFor?.(editing) : undefined}
-          open={editing !== null}
+          schema={schemaFor?.(editing)}
           onOpenChange={(open) => !open && setEditing(null)}
-          onSave={(spec) => onSaveEdit(editing!, spec)}
+          onSave={(spec) => onSaveEdit(editing, spec)}
         />
       )}
 

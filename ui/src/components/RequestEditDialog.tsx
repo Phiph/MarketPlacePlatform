@@ -1,33 +1,31 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SchemaForm } from '@/components/SchemaForm'
 import type { JsonSchema, ResourceRequest } from '@/lib/types'
 
+// The caller only mounts this component while there's a request to edit
+// (see RequestsTable) - a fresh instance per request, rather than one
+// long-lived instance toggled via an `open` prop. That's what lets `spec`
+// seed synchronously from `request.spec` on the initial render: seeding it
+// via a useEffect after mount instead made the Select start out
+// uncontrolled (spec still {}) and then flip to controlled once the effect
+// ran, which Radix's Select doesn't reliably pick up - the dropdown stuck
+// on "Select…" even once the underlying state was correct.
 export function RequestEditDialog({
   request,
   schema,
-  open,
   onOpenChange,
   onSave,
 }: {
-  request: ResourceRequest | null
+  request: ResourceRequest
   schema: JsonSchema | undefined
-  open: boolean
   onOpenChange: (open: boolean) => void
   onSave: (spec: Record<string, unknown>) => Promise<void>
 }) {
-  const [spec, setSpec] = useState<Record<string, unknown>>({})
+  const [spec, setSpec] = useState<Record<string, unknown>>(request.spec ?? {})
   const [saving, setSaving] = useState(false)
-
-  // Reset to the request's current spec whenever the dialog opens for a
-  // (possibly different) request - keyed off `open`/`request` rather than
-  // every request prop change, so a mid-edit polling refresh elsewhere on
-  // the page doesn't clobber what the user is typing.
-  useEffect(() => {
-    if (open) setSpec(request?.spec ?? {})
-  }, [open, request])
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -41,10 +39,10 @@ export function RequestEditDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-mono">{request?.metadata.name}</DialogTitle>
+          <DialogTitle className="font-mono">{request.metadata.name}</DialogTitle>
           <DialogDescription>Edit this request's spec and save to apply the change.</DialogDescription>
         </DialogHeader>
 

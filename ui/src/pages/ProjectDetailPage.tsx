@@ -87,7 +87,7 @@ export function ProjectDetailPage() {
             catalogEntries.map(async (entry) => {
               try {
                 const reqs = await api.listScopedRequests(session.apiKey, project, env.metadata.name, entry.name)
-                return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema }))
+                return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema?.properties?.spec }))
               } catch {
                 return [] as EnvironmentRequest[]
               }

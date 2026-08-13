@@ -34,7 +34,7 @@ export function RequestsPage() {
         entries.map(async (entry) => {
           try {
             const reqs = await api.listRequests(session.apiKey, entry.name)
-            return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema }))
+            return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema?.properties?.spec }))
           } catch {
             return []
           }
