@@ -66,6 +66,13 @@ export const api = {
       method: 'DELETE',
     }),
 
+  updateRequest: (apiKey: string, promiseName: string, reqName: string, spec: Record<string, unknown>) =>
+    request<ResourceRequest>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
+      { method: 'PUT', body: JSON.stringify({ spec }) },
+    ),
+
   // Projects carry no identity-sensitive fields (see promises/project/README.md),
   // so they ride the fully generic request routes above with a fixed promise name.
   listProjects: (apiKey: string) => request<Project[]>(apiKey, '/promises/project/requests'),
@@ -134,5 +141,19 @@ export const api = {
       apiKey,
       `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
       { method: 'DELETE' },
+    ),
+
+  updateScopedRequest: (
+    apiKey: string,
+    project: string,
+    environment: string,
+    promiseName: string,
+    reqName: string,
+    spec: Record<string, unknown>,
+  ) =>
+    request<ResourceRequest>(
+      apiKey,
+      `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
+      { method: 'PUT', body: JSON.stringify({ spec }) },
     ),
 }
