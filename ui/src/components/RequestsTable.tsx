@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Eye, Trash2 } from 'lucide-react'
+import { Eye, Pencil, Trash2 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,18 +14,22 @@ import {
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/StatusBadge'
 import { RequestDetailDialog } from '@/components/RequestDetailDialog'
-import type { ResourceRequest } from '@/lib/types'
+import { RequestEditDialog } from '@/components/RequestEditDialog'
+import type { JsonSchema, ResourceRequest } from '@/lib/types'
 
 interface RequestsTableProps {
   requests: ResourceRequest[]
   onDelete: (name: string) => void
   deletingName?: string | null
   showKind?: boolean
+  schemaFor?: (req: ResourceRequest) => JsonSchema | undefined
+  onSaveEdit?: (req: ResourceRequest, spec: Record<string, unknown>) => Promise<void>
 }
 
-export function RequestsTable({ requests, onDelete, deletingName, showKind }: RequestsTableProps) {
+export function RequestsTable({ requests, onDelete, deletingName, showKind, schemaFor, onSaveEdit }: RequestsTableProps) {
   const [selected, setSelected] = useState<ResourceRequest | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  const [editing, setEditing] = useState<ResourceRequest | null>(null)
 
   return (
     <>
@@ -55,6 +59,11 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind }: Re
                   <Button variant="ghost" size="icon" className="size-8" onClick={() => setSelected(req)}>
                     <Eye className="size-4" />
                   </Button>
+                  {onSaveEdit && (
+                    <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(req)}>
+                      <Pencil className="size-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -71,6 +80,16 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind }: Re
         </TableBody>
       </Table>
       <RequestDetailDialog request={selected} open={selected !== null} onOpenChange={(open) => !open && setSelected(null)} />
+
+      {onSaveEdit && (
+        <RequestEditDialog
+          request={editing}
+          schema={editing ? schemaFor?.(editing) : undefined}
+          open={editing !== null}
+          onOpenChange={(open) => !open && setEditing(null)}
+          onSave={(spec) => onSaveEdit(editing!, spec)}
+        />
+      )}
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
         <AlertDialogContent>
