@@ -36,6 +36,14 @@ spec:
                 properties:
                   size:
                     type: string
+                    enum:
+                    - 1Gi
+                    - 5Gi
+                    - 10Gi
+                    - 50Gi
+                    description: Storage volume size for the database.
+                required:
+                - size
                 type: object
             type: object
         served: true
