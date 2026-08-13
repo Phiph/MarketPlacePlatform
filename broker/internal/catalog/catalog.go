@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,7 +38,17 @@ const (
 	LabelVisible          = "marketplace.kratix.io/visible"
 	AnnotationDisplayName = "marketplace.kratix.io/display-name"
 	AnnotationDescription = "marketplace.kratix.io/description"
+	AnnotationOwner       = "marketplace.kratix.io/owner"
+	AnnotationLifecycle   = "marketplace.kratix.io/lifecycle"
+	AnnotationSupport     = "marketplace.kratix.io/support"
+	AnnotationPolicy      = "marketplace.kratix.io/policy"
 )
+
+// validLifecycles and validPolicies are the fixed, queryable value sets for
+// the lifecycle/policy evidence annotations - an unrecognised value counts
+// the same as an absent one (see parseEntry).
+var validLifecycles = map[string]bool{"experimental": true, "stable": true, "deprecated": true}
+var validPolicies = map[string]bool{"internal": true, "confidential": true, "regulated": true}
 
 // Entry is one Promise as seen by the marketplace: enough to render it in a
 // catalog and build a request against it.
@@ -53,6 +64,20 @@ type Entry struct {
 	Scope       string                 `json:"scope"`
 	Schema      map[string]interface{} `json:"schema,omitempty"`
 	Status      map[string]interface{} `json:"status,omitempty"`
+
+	// Operational evidence: see README.md, "Marketplace metadata
+	// convention". Owner/Lifecycle/Support/Policy are read straight off
+	// the Promise's annotations with no fallback default - an empty
+	// string means the annotation is absent. MissingEvidence is the
+	// queryable answer to "does this Promise have complete operational
+	// evidence": nil/empty when it does, otherwise the subset of
+	// {"owner", "lifecycle", "support", "policy"} that's absent or (for
+	// Lifecycle/Policy) not one of the fixed allowed values.
+	Owner           string   `json:"owner,omitempty"`
+	Lifecycle       string   `json:"lifecycle,omitempty"`
+	Support         string   `json:"support,omitempty"`
+	Policy          string   `json:"policy,omitempty"`
+	MissingEvidence []string `json:"missingEvidence,omitempty"`
 }
 
 // GVR is the GroupVersionResource of the custom resource this Promise
@@ -143,18 +168,42 @@ func parseEntry(obj *unstructured.Unstructured) (Entry, bool) {
 		displayName = name
 	}
 
+	owner := strings.TrimSpace(obj.GetAnnotations()[AnnotationOwner])
+	lifecycle := strings.TrimSpace(obj.GetAnnotations()[AnnotationLifecycle])
+	support := strings.TrimSpace(obj.GetAnnotations()[AnnotationSupport])
+	policy := strings.TrimSpace(obj.GetAnnotations()[AnnotationPolicy])
+
+	var missing []string
+	if owner == "" {
+		missing = append(missing, "owner")
+	}
+	if !validLifecycles[lifecycle] {
+		missing = append(missing, "lifecycle")
+	}
+	if support == "" {
+		missing = append(missing, "support")
+	}
+	if !validPolicies[policy] {
+		missing = append(missing, "policy")
+	}
+
 	return Entry{
-		Name:        name,
-		DisplayName: displayName,
-		Description: obj.GetAnnotations()[AnnotationDescription],
-		Visible:     obj.GetLabels()[LabelVisible] == "true",
-		Group:       group,
-		Version:     version,
-		Kind:        kind,
-		Plural:      plural,
-		Scope:       scope,
-		Schema:      schemaObj,
-		Status:      status,
+		Name:            name,
+		DisplayName:     displayName,
+		Description:     obj.GetAnnotations()[AnnotationDescription],
+		Visible:         obj.GetLabels()[LabelVisible] == "true",
+		Group:           group,
+		Version:         version,
+		Kind:            kind,
+		Plural:          plural,
+		Scope:           scope,
+		Schema:          schemaObj,
+		Status:          status,
+		Owner:           owner,
+		Lifecycle:       lifecycle,
+		Support:         support,
+		Policy:          policy,
+		MissingEvidence: missing,
 	}, true
 }
 

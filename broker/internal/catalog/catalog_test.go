@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"reflect"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -146,5 +147,97 @@ func TestPickVersionFallsBackToServed(t *testing.T) {
 	version, _ := pickVersion(versions)
 	if version != "v1beta1" {
 		t.Errorf("pickVersion() = %q, want the served version %q", version, "v1beta1")
+	}
+}
+
+func TestParseEntryOperationalEvidenceFields(t *testing.T) {
+	obj := databasePromise()
+	annotations := obj.Object["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})
+	annotations[AnnotationOwner] = "platform-team"
+	annotations[AnnotationLifecycle] = "stable"
+	annotations[AnnotationSupport] = "#platform-eng"
+	annotations[AnnotationPolicy] = "confidential"
+
+	entry, ok := parseEntry(obj)
+	if !ok {
+		t.Fatalf("expected the database Promise fixture to parse")
+	}
+	if entry.Owner != "platform-team" {
+		t.Errorf("Owner = %q, want %q", entry.Owner, "platform-team")
+	}
+	if entry.Lifecycle != "stable" {
+		t.Errorf("Lifecycle = %q, want %q", entry.Lifecycle, "stable")
+	}
+	if entry.Support != "#platform-eng" {
+		t.Errorf("Support = %q, want %q", entry.Support, "#platform-eng")
+	}
+	if entry.Policy != "confidential" {
+		t.Errorf("Policy = %q, want %q", entry.Policy, "confidential")
+	}
+	if len(entry.MissingEvidence) != 0 {
+		t.Errorf("MissingEvidence = %v, want empty", entry.MissingEvidence)
+	}
+}
+
+func TestParseEntryOperationalEvidenceMissing(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(annotations map[string]interface{})
+		wantMissing []string
+		hidden      bool
+	}{
+		{
+			name:        "all evidence annotations absent",
+			mutate:      func(annotations map[string]interface{}) {},
+			wantMissing: []string{"owner", "lifecycle", "support", "policy"},
+		},
+		{
+			// Evidence must be computed regardless of the visible label -
+			// three of the five real Promises are intentionally
+			// visible=false, and this must not gate evidence computation.
+			name:        "hidden promise, all evidence annotations absent",
+			mutate:      func(annotations map[string]interface{}) {},
+			wantMissing: []string{"owner", "lifecycle", "support", "policy"},
+			hidden:      true,
+		},
+		{
+			name: "owner present, rest absent",
+			mutate: func(annotations map[string]interface{}) {
+				annotations[AnnotationOwner] = "platform-team"
+			},
+			wantMissing: []string{"lifecycle", "support", "policy"},
+		},
+		{
+			name: "invalid lifecycle and policy values",
+			mutate: func(annotations map[string]interface{}) {
+				annotations[AnnotationOwner] = "platform-team"
+				annotations[AnnotationLifecycle] = "made-up-stage"
+				annotations[AnnotationSupport] = "#platform-eng"
+				annotations[AnnotationPolicy] = "made-up-class"
+			},
+			wantMissing: []string{"lifecycle", "policy"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obj := databasePromise()
+			if tt.hidden {
+				obj.Object["metadata"].(map[string]interface{})["labels"].(map[string]interface{})[LabelVisible] = "false"
+			}
+			annotations := obj.Object["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})
+			tt.mutate(annotations)
+
+			entry, ok := parseEntry(obj)
+			if !ok {
+				t.Fatalf("expected the fixture to parse")
+			}
+			if entry.Visible != !tt.hidden {
+				t.Errorf("Visible = %v, want %v", entry.Visible, !tt.hidden)
+			}
+			if !reflect.DeepEqual(entry.MissingEvidence, tt.wantMissing) {
+				t.Errorf("MissingEvidence = %v, want %v", entry.MissingEvidence, tt.wantMissing)
+			}
+		})
 	}
 }

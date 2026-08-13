@@ -11,6 +11,9 @@ Marked `marketplace.kratix.io/visible: "false"`: provisioning a business unit is
 operator/day-2 action, not something end-user teams self-serve through the catalog (unlike
 `database`).
 
+**Operational evidence** (see the root `README.md`'s "Marketplace metadata convention"):
+owner `platform-team`, lifecycle `stable`, support `#platform-eng`, policy `internal`.
+
 - `promise.yaml` - the `BusinessUnit` CRD (`demo.kratix.io/v1alpha1`) plus two workflows:
   - **promise workflow** (`workflows/promise/configure/dependencies/configure-deps`) -
     installs Capsule itself (operator, CRDs, a `CapsuleConfiguration`, and the shared

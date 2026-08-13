@@ -11,6 +11,9 @@ Marked `marketplace.kratix.io/visible: "false"`: not because it's operator-only 
 UI/API (`POST/GET/DELETE /api/promises/project/requests...` - see the root `README.md`'s
 "Marketplace broker API" section) rather than the generic ad-hoc catalog-request flow.
 
+**Operational evidence** (see the root `README.md`'s "Marketplace metadata convention"):
+owner `platform-team`, lifecycle `experimental`, support `#platform-eng`, policy `internal`.
+
 - `promise.yaml` - the `Project` CRD (`demo.kratix.io/v1alpha1`), with a single optional field,
   `spec.description`. One resource workflow only - no promise-level dependency workflow, no
   `destinationSelectors` (see "Why no infra output" below).

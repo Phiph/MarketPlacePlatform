@@ -8,6 +8,10 @@ metadata:
   annotations:
     marketplace.kratix.io/display-name: Postgres Database
     marketplace.kratix.io/description: A sized, managed Postgres database, provisioned on request.
+    marketplace.kratix.io/owner: platform-team
+    marketplace.kratix.io/lifecycle: stable
+    marketplace.kratix.io/support: "#platform-eng"
+    marketplace.kratix.io/policy: confidential
   name: database
 spec:
   api:
