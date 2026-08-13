@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"marketplace-broker/internal/k8sclient"
 	"marketplace-broker/internal/tenant"
@@ -105,7 +107,25 @@ func TestUserJourney_SubmitEditVerifyDelete(t *testing.T) {
 	}
 
 	// 3. Edit - the request-editing feature under test: change size.
-	resp, updated := do(http.MethodPut, "/promises/database/requests/"+reqName, `{"spec":{"size":"5Gi"}}`)
+	//
+	// Kratix's own controller adds a finalizer to a freshly created request
+	// within moments of admission, which can race resourceapi.Update's
+	// read-modify-write and 409 it - a real eventual-consistency window a
+	// real UI user would never hit (there's always human latency between
+	// loading a request and editing it), but this journey submits and edits
+	// back to back. The broker's own error message says what to do about
+	// it ("reload and try again"), so that's what a real client - and this
+	// test - should do, rather than treating it as a hard failure. Poll
+	// rather than a fixed sleep for the same reason rbac_integration_test.go
+	// does: no fixed delay is guaranteed long enough.
+	var updated map[string]interface{}
+	err = wait.PollUntilContextTimeout(t.Context(), 200*time.Millisecond, 10*time.Second, true, func(context.Context) (bool, error) {
+		resp, updated = do(http.MethodPut, "/promises/database/requests/"+reqName, `{"spec":{"size":"5Gi"}}`)
+		return resp.StatusCode != http.StatusConflict, nil
+	})
+	if err != nil {
+		t.Fatalf("edit: retrying past 409 conflicts timed out: %v", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("edit: status = %d, want %d; body: %v", resp.StatusCode, http.StatusOK, updated)
 	}
@@ -131,8 +151,18 @@ func TestUserJourney_SubmitEditVerifyDelete(t *testing.T) {
 		t.Fatalf("delete: status = %d, want %d", resp.StatusCode, http.StatusNoContent)
 	}
 
-	resp, _ = do(http.MethodGet, "/promises/database/requests/"+reqName, "")
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("get after delete: status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	// Kratix's resource-request objects carry a finalizer, so a successful
+	// DELETE (204 - Kubernetes itself accepted the request and set
+	// deletionTimestamp) doesn't mean the object is gone yet: it stays
+	// GETtable, terminating, until Kratix's delete pipeline finishes and
+	// removes the finalizer. Poll rather than asserting 404 immediately.
+	var getAfterDeleteStatus int
+	err = wait.PollUntilContextTimeout(t.Context(), 500*time.Millisecond, 30*time.Second, true, func(context.Context) (bool, error) {
+		resp, _ = do(http.MethodGet, "/promises/database/requests/"+reqName, "")
+		getAfterDeleteStatus = resp.StatusCode
+		return getAfterDeleteStatus == http.StatusNotFound, nil
+	})
+	if err != nil {
+		t.Errorf("get after delete: still not 404 after 30s (last status %d): %v", getAfterDeleteStatus, err)
 	}
 }
