@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("POST /promises/{name}/requests", s.submitRequest)
 	apiMux.HandleFunc("GET /promises/{name}/requests", s.listRequests)
 	apiMux.HandleFunc("GET /promises/{name}/requests/{reqName}", s.getRequest)
+	apiMux.HandleFunc("PUT /promises/{name}/requests/{reqName}", s.updateRequest)
 	apiMux.HandleFunc("DELETE /promises/{name}/requests/{reqName}", s.deleteRequest)
 
 	// Scoped routes: requests land in a project's environment namespace
@@ -59,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("POST /projects/{project}/environments/{environment}/promises/{name}/requests", s.submitScopedRequest)
 	apiMux.HandleFunc("GET /projects/{project}/environments/{environment}/promises/{name}/requests", s.listScopedRequests)
 	apiMux.HandleFunc("GET /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.getScopedRequest)
+	apiMux.HandleFunc("PUT /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.updateScopedRequest)
 	apiMux.HandleFunc("DELETE /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.deleteScopedRequest)
 
 	// The one dedicated endpoint: environment creation composes its spec
@@ -309,6 +311,77 @@ func (s *Server) doDeleteRequest(w http.ResponseWriter, r *http.Request, entry c
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	s.doUpdateRequest(w, r, *entry, team, tenant.Namespace(team))
+}
+
+func (s *Server) updateScopedRequest(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
+	s.doUpdateRequest(w, r, *entry, team, namespace)
+}
+
+// doUpdateRequest replaces an existing request's .spec wholesale (see
+// resourceapi.Update). Same environment guard as doSubmitRequest, for the
+// same reason: spec.team/spec.businessUnit are RBAC-relevant and
+// broker-composed for Environment, and spec.project is meaningless to
+// change post-creation since the namespace it produced is already fixed.
+func (s *Server) doUpdateRequest(w http.ResponseWriter, r *http.Request, entry catalog.Entry, team, namespace string) {
+	if entry.Name == "environment" {
+		writeError(w, http.StatusForbidden, "environment requests can't be updated via this endpoint; use POST /environments")
+		return
+	}
+
+	var body struct {
+		Spec map[string]interface{} `json:"spec"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	if body.Spec == nil {
+		writeError(w, http.StatusBadRequest, "\"spec\" is required")
+		return
+	}
+
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	reqName := r.PathValue("reqName")
+	updated, ok, err := resourceapi.Update(r.Context(), client, entry, namespace, reqName, body.Spec)
+	switch {
+	case apierrors.IsInvalid(err):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case apierrors.IsConflict(err):
+		writeError(w, http.StatusConflict, "the request was modified concurrently; reload and try again")
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such request: "+reqName)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated.Object)
 }
 
 // createEnvironment is the one place a client-supplied field would be a

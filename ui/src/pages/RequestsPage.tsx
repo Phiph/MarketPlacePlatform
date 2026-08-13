@@ -9,13 +9,14 @@ import { RequestsTable } from '@/components/RequestsTable'
 import { useAuth } from '@/lib/auth'
 import { api } from '@/lib/api'
 import { usePolling } from '@/lib/use-polling'
-import type { CatalogEntry, ResourceRequest } from '@/lib/types'
+import type { CatalogEntry, JsonSchema, ResourceRequest } from '@/lib/types'
 
 // One request row, tagged with which Promise it belongs to - the broker has
 // no "all my requests" endpoint, so this fans out a listRequests call per
 // visible catalog entry and merges the results.
 interface TaggedRequest extends ResourceRequest {
   promiseName: string
+  schema?: JsonSchema
 }
 
 export function RequestsPage() {
@@ -33,7 +34,7 @@ export function RequestsPage() {
         entries.map(async (entry) => {
           try {
             const reqs = await api.listRequests(session.apiKey, entry.name)
-            return reqs.map((r) => ({ ...r, promiseName: entry.name }))
+            return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema?.properties?.spec }))
           } catch {
             return []
           }
@@ -48,6 +49,13 @@ export function RequestsPage() {
   // Provisioning happens asynchronously on the cluster, so poll for status
   // updates rather than requiring a manual refresh.
   usePolling(() => void load(), 6000, [load])
+
+  async function handleUpdate(req: TaggedRequest, spec: Record<string, unknown>) {
+    if (!session) return
+    await api.updateRequest(session.apiKey, req.promiseName, req.metadata.name, spec)
+    toast.success(`Updated "${req.metadata.name}"`)
+    void load()
+  }
 
   async function handleDelete(promiseName: string, reqName: string) {
     if (!session) return
@@ -104,6 +112,8 @@ export function RequestsPage() {
               const match = requests.find((r) => r.metadata.name === reqName)
               if (match) void handleDelete(match.promiseName, reqName)
             }}
+            schemaFor={(req) => (req as TaggedRequest).schema}
+            onSaveEdit={(req, spec) => handleUpdate(req as TaggedRequest, spec)}
           />
         </Card>
       )}
