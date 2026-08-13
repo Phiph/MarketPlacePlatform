@@ -76,3 +76,27 @@ func Delete(ctx context.Context, client dynamic.Interface, entry catalog.Entry, 
 	}
 	return true, nil
 }
+
+// Update replaces an existing request's .spec wholesale - not a merge
+// patch. Callers (the broker's update handlers) always submit the complete
+// desired spec, matching how Submit's create semantics already work; a
+// merge patch would silently leave behind any field the caller omitted
+// because the user cleared it in the form. ok is false if no such request
+// exists.
+func Update(ctx context.Context, client dynamic.Interface, entry catalog.Entry, namespace, name string, spec map[string]interface{}) (obj *unstructured.Unstructured, ok bool, err error) {
+	existing, err := client.Resource(entry.GVR()).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("getting %s %q in namespace %q: %w", entry.Kind, name, namespace, err)
+	}
+
+	existing.Object["spec"] = spec
+
+	updated, err := client.Resource(entry.GVR()).Namespace(namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, false, fmt.Errorf("updating %s %q in namespace %q: %w", entry.Kind, name, namespace, err)
+	}
+	return updated, true, nil
+}
