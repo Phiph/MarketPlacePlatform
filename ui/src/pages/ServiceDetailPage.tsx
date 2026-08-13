@@ -128,6 +128,17 @@ export function ServiceDetailPage() {
     }
   }
 
+  async function handleUpdate(req: ResourceRequest, spec: Record<string, unknown>) {
+    if (!session) return
+    if (target) {
+      await api.updateScopedRequest(session.apiKey, target.project, target.environment, name, req.metadata.name, spec)
+    } else {
+      await api.updateRequest(session.apiKey, name, req.metadata.name, spec)
+    }
+    toast.success(`Updated "${req.metadata.name}"`)
+    loadRequests()
+  }
+
   async function handleDelete(reqName: string) {
     if (!session) return
     setDeletingName(reqName)
@@ -278,7 +289,13 @@ export function ServiceDetailPage() {
 
           {requests && requests.length > 0 && (
             <Card>
-              <RequestsTable requests={requests} onDelete={handleDelete} deletingName={deletingName} />
+              <RequestsTable
+                requests={requests}
+                onDelete={handleDelete}
+                deletingName={deletingName}
+                schemaFor={() => specSchema}
+                onSaveEdit={handleUpdate}
+              />
             </Card>
           )}
         </TabsContent>
