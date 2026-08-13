@@ -303,8 +303,16 @@ broker-run: ## Run the marketplace broker against the platform cluster (localhos
 	cd broker && BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) go run ./cmd/broker
 
 .PHONY: broker-test
-broker-test: ## Run the broker's Go tests
+broker-test: ## Run the broker's Go tests (fast - no cluster needed)
 	cd broker && go test ./...
+
+.PHONY: broker-test-integration
+broker-test-integration: ## Run the broker's real-cluster integration tests - needs `make up` + `make broker-provision-teams` + `make promise-demo` already done
+	cd broker && BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) go test -tags=integration ./...
+
+.PHONY: broker-run-fake
+broker-run-fake: ## Run the broker against an in-memory fake Kubernetes backend (localhost:8878) - no cluster needed, real broker code/routing/JSON
+	cd broker && BROKER_FAKE_K8S=1 go run ./cmd/broker
 
 .PHONY: broker-provision-teams
 broker-provision-teams: ## Submit a BusinessUnit + Team request for every entry in broker/config/teams.yaml
