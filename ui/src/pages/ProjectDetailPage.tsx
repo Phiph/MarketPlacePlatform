@@ -32,7 +32,7 @@ import {
 import { useAuth } from '@/lib/auth'
 import { api } from '@/lib/api'
 import { usePolling } from '@/lib/use-polling'
-import type { Environment, ResourceRequest } from '@/lib/types'
+import type { Environment, JsonSchema, ResourceRequest } from '@/lib/types'
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -41,6 +41,7 @@ const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 // RequestsPage uses for the flat case, just scoped per environment instead.
 interface EnvironmentRequest extends ResourceRequest {
   promiseName: string
+  schema?: JsonSchema
 }
 
 export function ProjectDetailPage() {
@@ -86,7 +87,7 @@ export function ProjectDetailPage() {
             catalogEntries.map(async (entry) => {
               try {
                 const reqs = await api.listScopedRequests(session.apiKey, project, env.metadata.name, entry.name)
-                return reqs.map((r) => ({ ...r, promiseName: entry.name }))
+                return reqs.map((r) => ({ ...r, promiseName: entry.name, schema: entry.schema }))
               } catch {
                 return [] as EnvironmentRequest[]
               }
@@ -141,6 +142,13 @@ export function ProjectDetailPage() {
     } finally {
       setDeletingName(null)
     }
+  }
+
+  async function handleUpdateRequest(environment: string, req: EnvironmentRequest, spec: Record<string, unknown>) {
+    if (!session) return
+    await api.updateScopedRequest(session.apiKey, project, environment, req.promiseName, req.metadata.name, spec)
+    toast.success(`Updated "${req.metadata.name}"`)
+    void load()
   }
 
   async function handleDeleteRequest(environment: string, reqName: string) {
@@ -272,6 +280,8 @@ export function ProjectDetailPage() {
                       showKind
                       deletingName={deletingReqName}
                       onDelete={(reqName) => void handleDeleteRequest(env.metadata.name, reqName)}
+                      schemaFor={(req) => (req as EnvironmentRequest).schema}
+                      onSaveEdit={(req, spec) => handleUpdateRequest(env.metadata.name, req as EnvironmentRequest, spec)}
                     />
                   )}
                 </CardContent>
