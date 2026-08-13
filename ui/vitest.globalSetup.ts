@@ -26,6 +26,10 @@ export default async function setup() {
   }
 
   const broker: ChildProcess = spawn(binPath, [], {
+    // config/teams.yaml (BROKER_TEAMS_FILE's default) is a path relative to
+    // the broker's own working directory, not wherever `npm test` happens
+    // to be invoked from - must match `cd broker && go run ./cmd/broker`.
+    cwd: BROKER_DIR,
     env: {
       ...process.env,
       BROKER_FAKE_K8S: '1',
