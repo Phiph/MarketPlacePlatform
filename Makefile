@@ -282,15 +282,18 @@ promise-load: ## Load $(PROMISE_DIR)'s built pipeline images into the platform c
 .PHONY: promise-demo
 promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_DIR), then request its example resource
 	kubectl --context $(PLATFORM_CTX) apply -f $(PROMISE_DIR)/promise.yaml
-	@echo "Waiting for the Promise's CRD to be established..."
-	@for i in $$(seq 1 60); do \
-		kubectl --context $(PLATFORM_CTX) get crd databases.demo.kratix.io >/dev/null 2>&1 && break; \
+	@crd=$$(yq '.spec.api.metadata.name' $(PROMISE_DIR)/promise.yaml); \
+	echo "Waiting for the Promise's CRD ($$crd) to be established..."; \
+	for i in $$(seq 1 60); do \
+		kubectl --context $(PLATFORM_CTX) get crd "$$crd" >/dev/null 2>&1 && break; \
 		sleep 2; \
 	done
 	kubectl --context $(PLATFORM_CTX) apply -f $(PROMISE_DIR)/example-resource.yaml
-	@echo ""
-	@echo "Watch the request:  kubectl --context $(PLATFORM_CTX) get databases.demo.kratix.io example-database -w"
-	@echo "Watch the worker:   kubectl --context $(WORKER_CTX) get pods -w"
+	@crd=$$(yq '.spec.api.metadata.name' $(PROMISE_DIR)/promise.yaml); \
+	name=$$(yq '.metadata.name' $(PROMISE_DIR)/example-resource.yaml); \
+	echo ""; \
+	echo "Watch the request:  kubectl --context $(PLATFORM_CTX) get $$crd $$name -w"; \
+	echo "Watch the worker:   kubectl --context $(WORKER_CTX) get pods -w"
 
 ##@ Broker API
 
