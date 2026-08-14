@@ -28,9 +28,13 @@ have something to simplify.
   `promises/environment/promise.yaml`). **This applies to the `Container`
   resource itself, on the platform cluster - not to the `Deployment`/
   `Service` the pipeline emits.** See "Known limitation" below.
-- cpu/memory ceilings are enforced by the existing Capsule `Tenant`
-  `LimitRange` (set via `BusinessUnit`, `promises/business-unit/promise.yaml`),
-  not by new validation code in this Promise.
+- cpu/memory are not currently ceiling-enforced on the resulting
+  worker-side workload - see "Known limitation" below. The existing
+  Capsule `Tenant` `LimitRange` (set via `BusinessUnit`,
+  `promises/business-unit/promise.yaml`) only reaches the **platform**
+  cluster, where `Container`'s own resource lives - not the worker
+  cluster, where the `Deployment`/`Service` the pipeline emits actually
+  land.
 
 ## Known limitation
 
@@ -57,6 +61,16 @@ multi-cluster problem bigger than `Container` alone - other Promises
 targeting the worker cluster hit the same gap. Worth a design of its own
 once more than one workload-producing Promise exists.
 
+**This also means no cpu/memory ceiling is enforced on the resulting
+workload.** `business-unit`/`team`/`environment` all carry
+`destinationSelectors: [{matchLabels: {environment: platform}}]`, so their
+Capsule `Tenant`/`Namespace`/`LimitRange` objects never reach the worker
+cluster. `Container`'s `Deployment`/`Service` land in `default` on
+`worker-1`, outside any Tenant, so a request like `cpu: "64"` or
+`memory: "512Gi"` is faithfully emitted with no admission-time check.
+Same extension point as the namespace gap above - solving one likely
+solves both.
+
 ## Non-goals
 
 - **No operator/dependency.** Unlike `Database` (Zalando Postgres
@@ -66,8 +80,10 @@ once more than one workload-producing Promise exists.
   see "Problem" above for why the primitive stays low-level.
 - **No numeric validation on cpu/memory in the CRD schema.** OpenAPI
   `minimum`/`maximum` only apply to numeric types; `cpu`/`memory` are
-  Kubernetes quantity strings (`"500m"`, `"512Mi"`). Ceilings are enforced
-  by the namespace's Capsule `LimitRange` at admission time instead.
+  Kubernetes quantity strings (`"500m"`, `"512Mi"`), so `pattern` regex is
+  used instead. No ceiling is enforced on the resulting worker-side
+  workload either - see "Known limitation" for why (the worker cluster has
+  no Capsule Tenant/LimitRange, unlike the platform cluster).
 - **No ArgoCD/ApplicationSets.** This platform already delivers every
   Promise's pipeline output via Flux (`kind-worker`'s `flux-worker`,
   `kind-platform`'s `flux-platform`); a second GitOps controller would

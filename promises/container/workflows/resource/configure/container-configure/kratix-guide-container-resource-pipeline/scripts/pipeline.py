@@ -18,7 +18,7 @@ def build_deployment(name, namespace, spec):
     return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
-        "metadata": {"name": name, "namespace": namespace},
+        "metadata": {"name": name, "namespace": namespace, "labels": {"app": name}},
         "spec": {
             "replicas": replicas,
             "selector": {"matchLabels": {"app": name}},
@@ -37,7 +37,7 @@ def build_service(name, namespace, spec):
     return {
         "apiVersion": "v1",
         "kind": "Service",
-        "metadata": {"name": name, "namespace": namespace},
+        "metadata": {"name": name, "namespace": namespace, "labels": {"app": name}},
         "spec": {
             "selector": {"app": name},
             "ports": [{"port": port, "targetPort": port}],

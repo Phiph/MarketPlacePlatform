@@ -7,7 +7,7 @@ def test_build_deployment_minimal():
 
     assert deployment["apiVersion"] == "apps/v1"
     assert deployment["kind"] == "Deployment"
-    assert deployment["metadata"] == {"name": "example-container", "namespace": "default"}
+    assert deployment["metadata"] == {"name": "example-container", "namespace": "default", "labels": {"app": "example-container"}}
     assert deployment["spec"]["replicas"] == 1
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     assert container["name"] == "example-container"
@@ -48,7 +48,7 @@ def test_build_service_with_port():
 
     assert service["apiVersion"] == "v1"
     assert service["kind"] == "Service"
-    assert service["metadata"] == {"name": "example-container", "namespace": "default"}
+    assert service["metadata"] == {"name": "example-container", "namespace": "default", "labels": {"app": "example-container"}}
     assert service["spec"] == {
         "selector": {"app": "example-container"},
         "ports": [{"port": 80, "targetPort": 80}],

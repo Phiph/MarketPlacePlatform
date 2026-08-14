@@ -32,7 +32,8 @@ always land in the `default` namespace on the worker cluster
 itself lives in on the platform cluster - the worker cluster has no
 per-team/environment namespaces yet. Matches `database`'s existing
 precedent; see the design doc's "Known limitation" section for why this
-isn't fixed here.
+isn't fixed here. It also means no cpu/memory ceiling is enforced on this workload today -
+see the design doc's "Known limitation" section for why.
 
 ## Try it
 
