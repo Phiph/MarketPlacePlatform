@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Eye, Pencil, Trash2 } from 'lucide-react'
+import { Eye, Pencil, Tag, Trash2 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,9 +13,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/StatusBadge'
+import { PromiseVersionBadge } from '@/components/PromiseVersionBadge'
 import { RequestDetailDialog } from '@/components/RequestDetailDialog'
 import { RequestEditDialog } from '@/components/RequestEditDialog'
-import type { JsonSchema, ResourceRequest } from '@/lib/types'
+import { RequestVersionDialog } from '@/components/RequestVersionDialog'
+import type { JsonSchema, PromiseRevision, RequestVersionInfo, ResourceRequest } from '@/lib/types'
 
 interface RequestsTableProps {
   requests: ResourceRequest[]
@@ -24,12 +26,26 @@ interface RequestsTableProps {
   showKind?: boolean
   schemaFor?: (req: ResourceRequest) => JsonSchema | undefined
   onSaveEdit?: (req: ResourceRequest, spec: Record<string, unknown>) => Promise<void>
+  versionInfoFor?: (req: ResourceRequest) => RequestVersionInfo | undefined
+  versionsFor?: (req: ResourceRequest) => PromiseRevision[] | undefined
+  onSetVersion?: (req: ResourceRequest, version: string) => Promise<void>
 }
 
-export function RequestsTable({ requests, onDelete, deletingName, showKind, schemaFor, onSaveEdit }: RequestsTableProps) {
+export function RequestsTable({
+  requests,
+  onDelete,
+  deletingName,
+  showKind,
+  schemaFor,
+  onSaveEdit,
+  versionInfoFor,
+  versionsFor,
+  onSetVersion,
+}: RequestsTableProps) {
   const [selected, setSelected] = useState<ResourceRequest | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [editing, setEditing] = useState<ResourceRequest | null>(null)
+  const [managingVersion, setManagingVersion] = useState<ResourceRequest | null>(null)
 
   return (
     <>
@@ -39,6 +55,7 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind, sche
             <TableHead>Name</TableHead>
             {showKind && <TableHead>Service</TableHead>}
             <TableHead>Status</TableHead>
+            {versionInfoFor && <TableHead>Version</TableHead>}
             <TableHead>Created</TableHead>
             <TableHead className="w-24 text-right">Actions</TableHead>
           </TableRow>
@@ -51,6 +68,11 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind, sche
               <TableCell>
                 <StatusBadge status={req.status} />
               </TableCell>
+              {versionInfoFor && (
+                <TableCell>
+                  <PromiseVersionBadge info={versionInfoFor(req)} />
+                </TableCell>
+              )}
               <TableCell className="text-sm text-muted-foreground">
                 {req.metadata.creationTimestamp ? new Date(req.metadata.creationTimestamp).toLocaleString() : '—'}
               </TableCell>
@@ -62,6 +84,11 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind, sche
                   {onSaveEdit && (
                     <Button variant="ghost" size="icon" className="size-8" onClick={() => setEditing(req)}>
                       <Pencil className="size-4" />
+                    </Button>
+                  )}
+                  {onSetVersion && (
+                    <Button variant="ghost" size="icon" className="size-8" onClick={() => setManagingVersion(req)}>
+                      <Tag className="size-4" />
                     </Button>
                   )}
                   <Button
@@ -87,6 +114,16 @@ export function RequestsTable({ requests, onDelete, deletingName, showKind, sche
           schema={schemaFor?.(editing)}
           onOpenChange={(open) => !open && setEditing(null)}
           onSave={(spec) => onSaveEdit(editing, spec)}
+        />
+      )}
+
+      {onSetVersion && managingVersion && (
+        <RequestVersionDialog
+          request={managingVersion}
+          versionInfo={versionInfoFor?.(managingVersion)}
+          versions={versionsFor?.(managingVersion)}
+          onOpenChange={(open) => !open && setManagingVersion(null)}
+          onSetVersion={(version) => onSetVersion(managingVersion, version)}
         />
       )}
 
