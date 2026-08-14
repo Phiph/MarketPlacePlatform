@@ -42,4 +42,35 @@ describe('api (real broker, fake K8s backend)', () => {
   it('surfaces a real 401 ApiError for an invalid API key', async () => {
     await expect(api.listPromises('not-a-real-key')).rejects.toMatchObject({ status: 401 } satisfies Partial<ApiError>)
   })
+
+  it('lists both revisions of the seeded database Promise, with v0.2.0 marked latest', async () => {
+    const versions = await api.listPromiseVersions(API_KEY, 'database')
+    expect(versions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ version: 'v0.1.0', latest: false }),
+        expect.objectContaining({ version: 'v0.2.0', latest: true }),
+      ]),
+    )
+  })
+
+  // These three routes (GET .../versions, GET/POST .../requests/{reqName}/version)
+  // are covered by Go handler-level unit tests too, but only over HTTP does a
+  // route-registration typo or path collision actually show up - see the
+  // seeded fixture in broker/cmd/broker/fake_seed.go: example-database in
+  // team-payments, pinned to v0.1.0 via its ResourceBinding, with v0.2.0
+  // (adds optional highAvailability) as latest. Sequenced in one `it` (not
+  // three) because the third assertion mutates that shared fixture's
+  // binding - fine here since BROKER_FAKE_K8S state is in-memory and reset
+  // on every broker process restart, so a rerun always starts from the same
+  // seeded state regardless of this test's internal order.
+  it('reports and then moves example-database off its pinned v0.1.0 binding', async () => {
+    const before = await api.getRequestVersion(API_KEY, 'database', 'example-database')
+    expect(before).toEqual({ boundVersion: 'v0.1.0', latestVersion: 'v0.2.0', upgradeAvailable: true })
+
+    const moved = await api.setRequestVersion(API_KEY, 'database', 'example-database', 'v0.2.0')
+    expect(moved).toEqual({ boundVersion: 'v0.2.0', latestVersion: 'v0.2.0', upgradeAvailable: false })
+
+    const after = await api.getRequestVersion(API_KEY, 'database', 'example-database')
+    expect(after).toEqual({ boundVersion: 'v0.2.0', latestVersion: 'v0.2.0', upgradeAvailable: false })
+  })
 })

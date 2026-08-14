@@ -1,0 +1,13 @@
+# A second example Database, distinct from example-resource.yaml (which
+# lives in the default namespace and is invisible to the broker/UI - they
+# only ever see team namespaces). This one lives in team-payments so it's
+# actually browsable through the marketplace UI, and `promise-demo` pins
+# its ResourceBinding to v0.0.1 after installing v0.2.0 on top - giving the
+# demo a real, visible "upgrade available" request out of the box.
+apiVersion: demo.kratix.io/v1alpha1
+kind: Database
+metadata:
+  name: example-database
+  namespace: team-payments
+spec:
+  size: "1Gi"

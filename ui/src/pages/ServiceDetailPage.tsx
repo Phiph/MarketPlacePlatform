@@ -16,7 +16,7 @@ import { RequestsTable } from '@/components/RequestsTable'
 import { useAuth } from '@/lib/auth'
 import { api, ApiError } from '@/lib/api'
 import { usePolling } from '@/lib/use-polling'
-import type { CatalogEntry, Environment, ResourceRequest } from '@/lib/types'
+import type { CatalogEntry, Environment, PromiseRevision, RequestVersionInfo, ResourceRequest } from '@/lib/types'
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -47,6 +47,8 @@ export function ServiceDetailPage() {
   const [requests, setRequests] = useState<ResourceRequest[] | null>(null)
   const [requestsError, setRequestsError] = useState<string | null>(null)
   const [deletingName, setDeletingName] = useState<string | null>(null)
+  const [versionInfoByName, setVersionInfoByName] = useState<Record<string, RequestVersionInfo>>({})
+  const [promiseVersions, setPromiseVersions] = useState<PromiseRevision[] | undefined>(undefined)
 
   const [requestName, setRequestName] = useState('')
   const [spec, setSpec] = useState<Record<string, unknown>>({})
@@ -81,7 +83,33 @@ export function ServiceDetailPage() {
     const call = target
       ? api.listScopedRequests(session.apiKey, target.project, target.environment, name)
       : api.listRequests(session.apiKey, name)
-    call.then(setRequests).catch((err) => setRequestsError(err instanceof Error ? err.message : 'Failed to load requests'))
+    call
+      .then(async (reqs) => {
+        setRequests(reqs)
+
+        const versionEntries = await Promise.all(
+          reqs.map(async (req) => {
+            try {
+              const info = target
+                ? await api.getScopedRequestVersion(session.apiKey, target.project, target.environment, name, req.metadata.name)
+                : await api.getRequestVersion(session.apiKey, name, req.metadata.name)
+              return [req.metadata.name, info] as const
+            } catch {
+              // No binding yet (a narrow race just after creation), or the
+              // Promise has no revisions to speak of - either way, the badge
+              // just shows nothing for this row rather than erroring the page.
+              return null
+            }
+          }),
+        )
+        setVersionInfoByName(Object.fromEntries(versionEntries.filter((e): e is readonly [string, RequestVersionInfo] => e !== null)))
+      })
+      .catch((err) => setRequestsError(err instanceof Error ? err.message : 'Failed to load requests'))
+
+    api
+      .listPromiseVersions(session.apiKey, name)
+      .then(setPromiseVersions)
+      .catch(() => setPromiseVersions(undefined))
   }, [session, name, target?.project, target?.environment])
 
   useEffect(() => {
@@ -136,6 +164,17 @@ export function ServiceDetailPage() {
       await api.updateRequest(session.apiKey, name, req.metadata.name, spec)
     }
     toast.success(`Updated "${req.metadata.name}"`)
+    loadRequests()
+  }
+
+  async function handleSetVersion(req: ResourceRequest, version: string) {
+    if (!session) return
+    if (target) {
+      await api.setScopedRequestVersion(session.apiKey, target.project, target.environment, name, req.metadata.name, version)
+    } else {
+      await api.setRequestVersion(session.apiKey, name, req.metadata.name, version)
+    }
+    toast.success(`Moved "${req.metadata.name}" to ${version}`)
     loadRequests()
   }
 
@@ -295,6 +334,9 @@ export function ServiceDetailPage() {
                 deletingName={deletingName}
                 schemaFor={() => specSchema}
                 onSaveEdit={handleUpdate}
+                versionInfoFor={(req) => versionInfoByName[req.metadata.name]}
+                versionsFor={() => promiseVersions}
+                onSetVersion={handleSetVersion}
               />
             </Card>
           )}

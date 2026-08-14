@@ -4,6 +4,10 @@ export interface CatalogEntry {
   displayName: string
   description?: string
   visible: boolean
+  // The Promise's current kratix.io/promise-version label - a different
+  // axis from `version` below (the CRD *schema* version, e.g. v1alpha1).
+  // See catalog.go's own doc comment on Entry.PromiseVersion.
+  promiseVersion?: string
   group: string
   version: string
   kind: string
@@ -26,6 +30,21 @@ export interface JsonSchema {
   format?: string
   minimum?: number
   maximum?: number
+}
+
+// Mirrors broker/internal/catalog.Revision (broker/internal/catalog/revisions.go).
+export interface PromiseRevision {
+  version: string
+  latest: boolean
+  createdAt: string
+}
+
+// Mirrors the requestVersionInfo response shape both GET and POST
+// .../requests/{reqName}/version return (broker/internal/api/server.go).
+export interface RequestVersionInfo {
+  boundVersion: string
+  latestVersion: string
+  upgradeAvailable: boolean
 }
 
 // A submitted request: an instance of a Promise's custom resource. Kubernetes

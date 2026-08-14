@@ -10,9 +10,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"marketplace-broker/internal/bindingapi"
 	"marketplace-broker/internal/catalog"
 	"marketplace-broker/internal/k8sclient"
 	"marketplace-broker/internal/resourceapi"
@@ -43,6 +46,7 @@ func (s *Server) Handler() http.Handler {
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /promises", s.listPromises)
 	apiMux.HandleFunc("GET /promises/{name}", s.getPromise)
+	apiMux.HandleFunc("GET /promises/{name}/versions", s.listPromiseVersions)
 
 	// Flat routes: requests land in the caller's own team-<name> namespace.
 	// This is the original, still-default request shape - unchanged.
@@ -51,6 +55,8 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("GET /promises/{name}/requests/{reqName}", s.getRequest)
 	apiMux.HandleFunc("PUT /promises/{name}/requests/{reqName}", s.updateRequest)
 	apiMux.HandleFunc("DELETE /promises/{name}/requests/{reqName}", s.deleteRequest)
+	apiMux.HandleFunc("GET /promises/{name}/requests/{reqName}/version", s.getRequestVersion)
+	apiMux.HandleFunc("POST /promises/{name}/requests/{reqName}/version", s.setRequestVersion)
 
 	// Scoped routes: requests land in a project's environment namespace
 	// instead. Project/Environment CRUD itself (aside from creation, below)
@@ -62,6 +68,8 @@ func (s *Server) Handler() http.Handler {
 	apiMux.HandleFunc("GET /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.getScopedRequest)
 	apiMux.HandleFunc("PUT /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.updateScopedRequest)
 	apiMux.HandleFunc("DELETE /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}", s.deleteScopedRequest)
+	apiMux.HandleFunc("GET /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}/version", s.getScopedRequestVersion)
+	apiMux.HandleFunc("POST /projects/{project}/environments/{environment}/promises/{name}/requests/{reqName}/version", s.setScopedRequestVersion)
 
 	// The one dedicated endpoint: environment creation composes its spec
 	// server-side rather than forwarding the request body, since
@@ -311,6 +319,221 @@ func (s *Server) doDeleteRequest(w http.ResponseWriter, r *http.Request, entry c
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listPromiseVersions(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	revisions, err := catalog.ListRevisions(r.Context(), s.admin.Dynamic, entry.Name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, revisions)
+}
+
+// requestVersionInfo is the shared response shape for doGetRequestVersion
+// and doSetRequestVersion.
+type requestVersionInfo struct {
+	BoundVersion     string `json:"boundVersion"`
+	LatestVersion    string `json:"latestVersion"`
+	UpgradeAvailable bool   `json:"upgradeAvailable"`
+}
+
+func latestVersion(revisions []catalog.Revision) string {
+	for _, rev := range revisions {
+		if rev.Latest {
+			return rev.Version
+		}
+	}
+	return ""
+}
+
+func (s *Server) getRequestVersion(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	s.doGetRequestVersion(w, r, *entry, team, tenant.Namespace(team))
+}
+
+func (s *Server) getScopedRequestVersion(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
+	s.doGetRequestVersion(w, r, *entry, team, namespace)
+}
+
+// doGetRequestVersion reports which PromiseRevision reqName is currently
+// bound to, and whether a newer one is available. A separate sub-resource
+// from doGetRequest deliberately: that handler passes the raw Kubernetes
+// object straight through (writeJSON(w, ..., obj.Object)) and three UI
+// call sites already depend on that exact shape - see
+// docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md,
+// "New read endpoints."
+func (s *Server) doGetRequestVersion(w http.ResponseWriter, r *http.Request, entry catalog.Entry, team, namespace string) {
+	reqName := r.PathValue("reqName")
+
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	_, ok, err := resourceapi.Get(r.Context(), client, entry, namespace, reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such request: "+reqName)
+		return
+	}
+
+	revisions, err := catalog.ListRevisions(r.Context(), s.admin.Dynamic, entry.Name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	latest := latestVersion(revisions)
+
+	binding, ok, err := bindingapi.Get(r.Context(), client, namespace, entry.Name, reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such request: "+reqName)
+		return
+	}
+
+	bound := bindingapi.Version(binding, latest)
+	writeJSON(w, http.StatusOK, requestVersionInfo{
+		BoundVersion:     bound,
+		LatestVersion:    latest,
+		UpgradeAvailable: bound != latest,
+	})
+}
+
+func (s *Server) setRequestVersion(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	s.doSetRequestVersion(w, r, *entry, team, tenant.Namespace(team))
+}
+
+func (s *Server) setScopedRequestVersion(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.lookupPromise(w, r)
+	if !ok {
+		return
+	}
+	team := teamFromContext(r.Context())
+	namespace := tenant.ProjectEnvironmentNamespace(team, r.PathValue("project"), r.PathValue("environment"))
+	s.doSetRequestVersion(w, r, *entry, team, namespace)
+}
+
+// doSetRequestVersion moves an existing request's ResourceBinding to a
+// different Promise revision - forward (upgrade) or back (rollback), no
+// directionality check. Validates the request's current spec against the
+// target revision's schema first, so a bad move 400s immediately instead
+// of the Resource Configure workflow failing asynchronously later.
+func (s *Server) doSetRequestVersion(w http.ResponseWriter, r *http.Request, entry catalog.Entry, team, namespace string) {
+	var body struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBody)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	if body.Version == "" {
+		writeError(w, http.StatusBadRequest, "\"version\" is required")
+		return
+	}
+
+	reqName := r.PathValue("reqName")
+
+	schemaObj, ok, err := catalog.RevisionSchema(r.Context(), s.admin.Dynamic, entry.Name, body.Version)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such promise version: "+body.Version)
+		return
+	}
+
+	client, err := s.admin.Groups.ForGroup(tenant.Group(team))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	existing, ok, err := resourceapi.Get(r.Context(), client, entry, namespace, reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such request: "+reqName)
+		return
+	}
+
+	spec, _, _ := unstructured.NestedMap(existing.Object, "spec")
+	if problems := catalog.ValidateAgainstSchema(schemaObj, spec); len(problems) > 0 {
+		writeError(w, http.StatusBadRequest, "spec is not valid for version "+body.Version+": "+strings.Join(problems, "; "))
+		return
+	}
+
+	binding, ok, err := bindingapi.SetVersion(r.Context(), client, namespace, entry.Name, reqName, body.Version)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case apierrors.IsConflict(err):
+		writeError(w, http.StatusConflict, "the binding was modified concurrently; reload and try again")
+		return
+	case err != nil:
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "no such request: "+reqName)
+		return
+	}
+
+	revisions, err := catalog.ListRevisions(r.Context(), s.admin.Dynamic, entry.Name)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	latest := latestVersion(revisions)
+	bound := bindingapi.Version(binding, latest)
+
+	writeJSON(w, http.StatusOK, requestVersionInfo{
+		BoundVersion:     bound,
+		LatestVersion:    latest,
+		UpgradeAvailable: bound != latest,
+	})
 }
 
 func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {

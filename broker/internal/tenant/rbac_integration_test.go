@@ -20,6 +20,7 @@ import (
 )
 
 var configMapsResource = schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+var resourceBindingsResource = schema.GroupVersionResource{Group: "platform.kratix.io", Version: "v1alpha1", Resource: "resourcebindings"}
 
 // TestRBACBoundary is the real proof this whole design exists for: it
 // builds impersonated clients for two teams *in the same business unit*
@@ -121,6 +122,138 @@ func createConfigMap(ctx context.Context, client dynamic.Interface, namespace, n
 		},
 	}}
 	_, err := client.Resource(configMapsResource).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
+}
+
+// TestRBACBoundary_ResourceBindings is TestRBACBoundary's counterpart for
+// platform.kratix.io/ResourceBinding - the object the promise
+// version-upgrade feature reads/updates (see
+// docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md).
+// Confirms the RBAC change in marketplace-rbac.yaml actually grants teams
+// get/list/update on their own namespace's bindings, and nothing on
+// another team's - same boundary, same mechanism, different API group
+// than TestRBACBoundary already proves.
+//
+// Unlike TestRBACBoundary, this does not have the impersonated client
+// create its own fixture: teams are only ever granted get/list/watch/update
+// on ResourceBinding (see marketplace-rbac.yaml) - Kratix's own controller
+// is what creates one, automatically, the moment a resource request is
+// submitted. So the fixture here is seeded with an unimpersonated
+// (cluster-admin) client, standing in for Kratix's controller identity,
+// and the boundary under test is get/list/update, matching what
+// bindingapi.Get/SetVersion (broker/internal/bindingapi/binding.go)
+// actually do.
+func TestRBACBoundary_ResourceBindings(t *testing.T) {
+	kubeContext := os.Getenv("BROKER_KUBE_CONTEXT")
+	if kubeContext == "" {
+		kubeContext = "kind-platform"
+	}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		clientcmd.NewDefaultClientConfigLoadingRules(),
+		&clientcmd.ConfigOverrides{CurrentContext: kubeContext},
+	).ClientConfig()
+	if err != nil {
+		t.Fatalf("loading kubeconfig (context %q): %v", kubeContext, err)
+	}
+
+	adminClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("building admin client: %v", err)
+	}
+
+	groups := k8sclient.NewGroupClients(config)
+
+	const teamA, teamB = "payments", "checkout"
+	nsA, nsB := Namespace(teamA), Namespace(teamB)
+
+	clientA, err := groups.ForGroup(Group(teamA))
+	if err != nil {
+		t.Fatalf("ForGroup(%s): %v", teamA, err)
+	}
+	clientB, err := groups.ForGroup(Group(teamB))
+	if err != nil {
+		t.Fatalf("ForGroup(%s): %v", teamB, err)
+	}
+
+	ctx := context.Background()
+
+	// Seed one binding per namespace as admin - standing in for Kratix's
+	// own controller, which is the only identity ever granted "create" on
+	// this resource.
+	for _, ns := range []string{nsA, nsB} {
+		if err := seedResourceBindingAsAdmin(ctx, adminClient, ns, "rbac-boundary-test"); err != nil {
+			t.Fatalf("seeding ResourceBinding fixture in %q: %v", ns, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		team   string
+		client dynamic.Interface
+		ns     string
+	}{
+		{teamA, clientA, nsA},
+		{teamB, clientB, nsB},
+	} {
+		// The shared GlobalTenantResource reconciles on its own schedule
+		// (see its resyncPeriod), so there's a window after a team's
+		// namespace first appears where even the owning team's own calls
+		// still 403 - poll rather than asserting instantly.
+		var lastErr error
+		err := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 15*time.Second, true, func(ctx context.Context) (bool, error) {
+			_, lastErr = tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).List(ctx, metav1.ListOptions{})
+			return lastErr == nil, nil
+		})
+		if err != nil {
+			t.Fatalf("%s: list ResourceBindings in own namespace %q never succeeded: %v", tc.team, tc.ns, lastErr)
+		}
+
+		obj, err := tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).Get(ctx, "rbac-boundary-test", metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("%s: get own namespace %q's binding: %v", tc.team, tc.ns, err)
+		}
+		if err := unstructured.SetNestedField(obj.Object, "v0.2.0", "spec", "version"); err != nil {
+			t.Fatalf("%s: setting spec.version on fetched binding: %v", tc.team, err)
+		}
+		if _, err := tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+			t.Errorf("%s: update own namespace %q's binding: %v", tc.team, tc.ns, err)
+		}
+	}
+
+	if _, err := clientA.Resource(resourceBindingsResource).Namespace(nsB).List(ctx, metav1.ListOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team A listing team B's namespace %q: got err=%v, want Forbidden", nsB, err)
+	}
+	if _, err := clientA.Resource(resourceBindingsResource).Namespace(nsB).Get(ctx, "rbac-boundary-test", metav1.GetOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team A getting team B's binding in namespace %q: got err=%v, want Forbidden", nsB, err)
+	}
+	if _, err := clientB.Resource(resourceBindingsResource).Namespace(nsA).List(ctx, metav1.ListOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team B listing team A's namespace %q: got err=%v, want Forbidden", nsA, err)
+	}
+	if _, err := clientB.Resource(resourceBindingsResource).Namespace(nsA).Get(ctx, "rbac-boundary-test", metav1.GetOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team B getting team A's binding in namespace %q: got err=%v, want Forbidden", nsA, err)
+	}
+}
+
+func seedResourceBindingAsAdmin(ctx context.Context, client dynamic.Interface, namespace, name string) error {
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "platform.kratix.io/v1alpha1",
+		"kind":       "ResourceBinding",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"promiseRef": map[string]interface{}{"name": "database"},
+			"resourceRef": map[string]interface{}{
+				"name":      "rbac-boundary-test-resource",
+				"namespace": namespace,
+			},
+			"version": "latest",
+		},
+	}}
+	_, err := client.Resource(resourceBindingsResource).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}

@@ -182,9 +182,12 @@ except `/healthz`):
 | GET | `/healthz` | Liveness, no auth |
 | GET | `/api/promises` | List catalog-visible Promises (add `?all=true` to see hidden ones too) |
 | GET | `/api/promises/{name}` | One Promise's full entry, including its request schema |
+| GET | `/api/promises/{name}/versions` | List every known Promise revision for this Promise: `[{"version", "latest", "createdAt"}, ...]` |
 | POST | `/api/promises/{name}/requests` | Submit a request in the caller's own `team-<name>` namespace: `{"name": "...", "spec": {...}}` |
 | GET | `/api/promises/{name}/requests` | List the calling team's requests against this Promise |
 | GET | `/api/promises/{name}/requests/{reqName}` | One request's current status |
+| GET | `/api/promises/{name}/requests/{reqName}/version` | The request's current bound version: `{"boundVersion", "latestVersion", "upgradeAvailable"}` |
+| POST | `/api/promises/{name}/requests/{reqName}/version` | Move the request to a different Promise revision (upgrade or rollback): `{"version": "..."}` |
 | DELETE | `/api/promises/{name}/requests/{reqName}` | Delete a request |
 | POST | `/api/environments` | Create an Environment under one of the caller's Projects: `{"name": "...", "project": "..."}` - see "Projects and Environments" below |
 | POST | `/api/projects/{project}/environments/{environment}/promises/{name}/requests` | Same as the flat submit route above, but scoped into that project/environment's namespace instead |
@@ -200,6 +203,12 @@ curl -X POST -H "Authorization: Bearer demo-key-payments" \
   localhost:8878/api/promises/database/requests
 
 curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/requests
+
+curl -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/versions
+
+curl -X POST -H "Authorization: Bearer demo-key-payments" \
+  -d '{"version":"v0.2.0"}' \
+  localhost:8878/api/promises/database/requests/my-db/version
 ```
 
 ### Projects and Environments

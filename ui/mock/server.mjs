@@ -166,8 +166,50 @@ for (const team of Object.values(TEAMS)) requests[team] = {}
 const scopedRequests = {}
 for (const team of Object.values(TEAMS)) scopedRequests[team] = {}
 
+// boundVersions[team][promiseName][requestName] = version string. Tracks
+// which PromiseRevision each request is pinned to, mirroring the real
+// broker's ResourceBinding.spec.version (broker/internal/bindingapi). A
+// request with no entry here is treated as bound to its Promise's latest
+// version (same default the real broker's bindingapi.Version applies to a
+// binding with no version set).
+const boundVersions = {}
+for (const team of Object.values(TEAMS)) boundVersions[team] = {}
+
+// Scoped equivalent of `boundVersions` above, mirroring scopedRequests:
+// scopedBoundVersions[team][project][environment][promiseName][requestName]
+const scopedBoundVersions = {}
+for (const team of Object.values(TEAMS)) scopedBoundVersions[team] = {}
+
 function findPromise(name) {
   return PROMISES.find((p) => p.name === name)
+}
+
+// Mirrors broker/cmd/broker/fake_seed.go's seeded PromiseRevisions: the
+// database Promise has two revisions on record (v0.1.0, and v0.2.0 marked
+// latest). Every other Promise gets one synthetic "latest" revision so the
+// version-upgrade feature still works generically against the mock, not
+// just for database.
+const VERSIONS = {
+  database: [
+    { version: 'v0.1.0', latest: false, createdAt: '2026-07-01T00:00:00Z' },
+    { version: 'v0.2.0', latest: true, createdAt: '2026-08-10T00:00:00Z' },
+  ],
+}
+
+function versionsFor(promiseName) {
+  return VERSIONS[promiseName] ?? [{ version: 'v1.0.0', latest: true, createdAt: '2026-01-01T00:00:00Z' }]
+}
+
+function latestVersionOf(versions) {
+  return versions.find((v) => v.latest)?.version ?? ''
+}
+
+// Builds the RequestVersionInfo shape shared by the GET and POST
+// .../version routes (ui/src/lib/types.ts's RequestVersionInfo, mirroring
+// broker/internal/api/server.go's requestVersionInfo).
+function requestVersionInfo(bound, versions) {
+  const latest = latestVersionOf(versions)
+  return { boundVersion: bound, latestVersion: latest, upgradeAvailable: bound !== latest }
 }
 
 function readBody(req) {
@@ -229,7 +271,7 @@ const server = createServer(async (req, res) => {
   if (!apiKey) return send(res, 401, { error: 'missing bearer token' })
   if (!team) return send(res, 401, { error: 'invalid API key' })
 
-  const [, resource, name, sub, reqName] = parts
+  const [, resource, name, sub, reqName, versionSeg] = parts
 
   try {
     if (resource === 'promises' && !name && req.method === 'GET') {
@@ -245,6 +287,12 @@ const server = createServer(async (req, res) => {
       const entry = findPromise(name)
       if (!entry) return send(res, 404, { error: `no such promise: ${name}` })
       return send(res, 200, entry)
+    }
+
+    if (resource === 'promises' && name && sub === 'versions' && !reqName && req.method === 'GET') {
+      const entry = findPromise(name)
+      if (!entry) return send(res, 404, { error: `no such promise: ${name}` })
+      return send(res, 200, versionsFor(name))
     }
 
     if (resource === 'promises' && name && sub === 'requests' && !reqName) {
@@ -275,7 +323,31 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    if (resource === 'promises' && name && sub === 'requests' && reqName) {
+    if (resource === 'promises' && name && sub === 'requests' && reqName && versionSeg === 'version') {
+      const entry = findPromise(name)
+      if (!entry) return send(res, 404, { error: `no such promise: ${name}` })
+      const bucket = requests[team][name] ?? {}
+      const versions = versionsFor(name)
+
+      if (req.method === 'GET') {
+        if (!bucket[reqName]) return send(res, 404, { error: `no such request: ${reqName}` })
+        const bound = boundVersions[team][name]?.[reqName] ?? latestVersionOf(versions)
+        return send(res, 200, requestVersionInfo(bound, versions))
+      }
+
+      if (req.method === 'POST') {
+        const body = await readBody(req)
+        if (!versions.some((v) => v.version === body.version)) {
+          return send(res, 404, { error: `no such promise version: ${body.version}` })
+        }
+        if (!bucket[reqName]) return send(res, 404, { error: `no such request: ${reqName}` })
+        boundVersions[team][name] ??= {}
+        boundVersions[team][name][reqName] = body.version
+        return send(res, 200, requestVersionInfo(body.version, versions))
+      }
+    }
+
+    if (resource === 'promises' && name && sub === 'requests' && reqName && !versionSeg) {
       const entry = findPromise(name)
       if (!entry) return send(res, 404, { error: `no such promise: ${name}` })
       const bucket = requests[team][name] ?? {}
@@ -343,6 +415,7 @@ const server = createServer(async (req, res) => {
       const environment = parts[3] === 'environments' ? parts[4] : undefined
       const promiseName = parts[5] === 'promises' ? parts[6] : undefined
       const scopedReqName = parts[7] === 'requests' ? parts[8] : undefined
+      const scopedVersionSeg = parts[9]
 
       if (!project || !environment || !promiseName || parts[7] !== 'requests') {
         return send(res, 404, { error: 'not found' })
@@ -377,6 +450,29 @@ const server = createServer(async (req, res) => {
           bucket[body.name] = resourceObj
           simulateProgress(resourceObj)
           return send(res, 201, resourceObj)
+        }
+      } else if (scopedVersionSeg === 'version') {
+        const versions = versionsFor(promiseName)
+
+        if (req.method === 'GET') {
+          if (!bucket[scopedReqName]) return send(res, 404, { error: `no such request: ${scopedReqName}` })
+          const bound =
+            scopedBoundVersions[team][project]?.[environment]?.[promiseName]?.[scopedReqName] ??
+            latestVersionOf(versions)
+          return send(res, 200, requestVersionInfo(bound, versions))
+        }
+
+        if (req.method === 'POST') {
+          const body = await readBody(req)
+          if (!versions.some((v) => v.version === body.version)) {
+            return send(res, 404, { error: `no such promise version: ${body.version}` })
+          }
+          if (!bucket[scopedReqName]) return send(res, 404, { error: `no such request: ${scopedReqName}` })
+          scopedBoundVersions[team][project] ??= {}
+          scopedBoundVersions[team][project][environment] ??= {}
+          scopedBoundVersions[team][project][environment][promiseName] ??= {}
+          scopedBoundVersions[team][project][environment][promiseName][scopedReqName] = body.version
+          return send(res, 200, requestVersionInfo(body.version, versions))
         }
       } else {
         if (req.method === 'GET') {

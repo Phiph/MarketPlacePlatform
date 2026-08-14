@@ -1,4 +1,4 @@
-import type { CatalogEntry, ResourceRequest, Project, Environment, ApiErrorBody } from '@/lib/types'
+import type { CatalogEntry, ResourceRequest, Project, Environment, ApiErrorBody, PromiseRevision, RequestVersionInfo } from '@/lib/types'
 
 // Same-origin default lets the UI be reverse-proxied alongside the broker;
 // override for local dev against `make broker-run` (see .env.example).
@@ -46,6 +46,9 @@ export const api = {
   getPromise: (apiKey: string, name: string) =>
     request<CatalogEntry>(apiKey, `/promises/${encodeURIComponent(name)}`),
 
+  listPromiseVersions: (apiKey: string, promiseName: string) =>
+    request<PromiseRevision[]>(apiKey, `/promises/${encodeURIComponent(promiseName)}/versions`),
+
   submitRequest: (apiKey: string, promiseName: string, name: string, spec: Record<string, unknown>) =>
     request<ResourceRequest>(apiKey, `/promises/${encodeURIComponent(promiseName)}/requests`, {
       method: 'POST',
@@ -71,6 +74,19 @@ export const api = {
       apiKey,
       `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
       { method: 'PUT', body: JSON.stringify({ spec }) },
+    ),
+
+  getRequestVersion: (apiKey: string, promiseName: string, reqName: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+    ),
+
+  setRequestVersion: (apiKey: string, promiseName: string, reqName: string, version: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+      { method: 'POST', body: JSON.stringify({ version }) },
     ),
 
   // Projects carry no identity-sensitive fields (see promises/project/README.md),
@@ -155,5 +171,25 @@ export const api = {
       apiKey,
       `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}`,
       { method: 'PUT', body: JSON.stringify({ spec }) },
+    ),
+
+  getScopedRequestVersion: (apiKey: string, project: string, environment: string, promiseName: string, reqName: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+    ),
+
+  setScopedRequestVersion: (
+    apiKey: string,
+    project: string,
+    environment: string,
+    promiseName: string,
+    reqName: string,
+    version: string,
+  ) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+      { method: 'POST', body: JSON.stringify({ version }) },
     ),
 }
