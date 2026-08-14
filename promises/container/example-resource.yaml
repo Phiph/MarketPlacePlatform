@@ -1,0 +1,4 @@
+apiVersion: demo.kratix.io/v1alpha1
+kind: Container
+metadata:
+  name: example-container
