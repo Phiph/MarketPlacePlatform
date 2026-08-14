@@ -1901,3 +1901,583 @@ curl -X POST -H "Authorization: Bearer demo-key-payments" \
 git add README.md
 git commit -m "docs: document the promise version endpoints in the broker API README section"
 ```
+
+---
+
+## UI follow-on (added after Task 8, at the user's request)
+
+The design spec explicitly scoped the UI out as a follow-on (see the spec's "Non-goals"). The user asked to pull a first slice of it in now: enough to actually *see* which Promise version a request is bound to and move it, rather than only via `curl`. Scoped deliberately narrow - **`ServiceDetailPage` only** for Task 11 (the single-promise view, and the one the user was looking at when they asked). `ProjectDetailPage`/`RequestsPage` fan out over every environment × every catalog Promise already (see `ProjectDetailPage.tsx`'s `load()`, `catalogEntries.map(...)` nested in `projectEnvs.map(...)`, all re-run on a 5s poll) - adding a per-row version fetch to that fan-out multiplies an already-nontrivial N×M polling cost by a further per-request fetch, and is a bigger, separate call than duplicating the pattern proven safe on the single-promise page first. Follow-on work, not in this slice.
+
+## Task 9: Version types and API client functions
+
+**Files:**
+- Modify: `ui/src/lib/types.ts`
+- Modify: `ui/src/lib/api.ts`
+
+**Interfaces:**
+- Produces: `PromiseRevision{version, latest, createdAt}`, `RequestVersionInfo{boundVersion, latestVersion, upgradeAvailable}` (new types, mirroring `catalog.Revision`/`requestVersionInfo` in the Go broker exactly); `CatalogEntry.promiseVersion?: string` (new field, mirroring `catalog.Entry.PromiseVersion`); `api.listPromiseVersions`, `api.getRequestVersion`, `api.getScopedRequestVersion`, `api.setRequestVersion`, `api.setScopedRequestVersion` - Task 10's `RequestVersionDialog` and Task 11's `ServiceDetailPage` wiring both call these.
+
+- [ ] **Step 1: Add the two new types and the `CatalogEntry` field to `types.ts`**
+
+Add `promiseVersion?: string` to `CatalogEntry` (`ui/src/lib/types.ts:1-14`), right after `visible: boolean`:
+
+```ts
+// Mirrors broker/internal/catalog.Entry (broker/internal/catalog/catalog.go).
+export interface CatalogEntry {
+  name: string
+  displayName: string
+  description?: string
+  visible: boolean
+  // The Promise's current kratix.io/promise-version label - a different
+  // axis from `version` below (the CRD *schema* version, e.g. v1alpha1).
+  // See catalog.go's own doc comment on Entry.PromiseVersion.
+  promiseVersion?: string
+  group: string
+  version: string
+  kind: string
+  plural: string
+  scope: string
+  schema?: JsonSchema
+  status?: Record<string, unknown>
+}
+```
+
+Add two new top-level interfaces anywhere after `CatalogEntry` (e.g. right before `ResourceRequest`):
+
+```ts
+// Mirrors broker/internal/catalog.Revision (broker/internal/catalog/revisions.go).
+export interface PromiseRevision {
+  version: string
+  latest: boolean
+  createdAt: string
+}
+
+// Mirrors the requestVersionInfo response shape both GET and POST
+// .../requests/{reqName}/version return (broker/internal/api/server.go).
+export interface RequestVersionInfo {
+  boundVersion: string
+  latestVersion: string
+  upgradeAvailable: boolean
+}
+```
+
+- [ ] **Step 2: Add the five API client functions to `api.ts`**
+
+Add the import: change line 1 to also import the two new types:
+
+```ts
+import type { CatalogEntry, ResourceRequest, Project, Environment, ApiErrorBody, PromiseRevision, RequestVersionInfo } from '@/lib/types'
+```
+
+Add `listPromiseVersions` right after `getPromise` (`api.ts:46-47`):
+
+```ts
+  listPromiseVersions: (apiKey: string, promiseName: string) =>
+    request<PromiseRevision[]>(apiKey, `/promises/${encodeURIComponent(promiseName)}/versions`),
+```
+
+Add the flat `getRequestVersion`/`setRequestVersion` pair right after `updateRequest` (`api.ts:69-74`):
+
+```ts
+  getRequestVersion: (apiKey: string, promiseName: string, reqName: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+    ),
+
+  setRequestVersion: (apiKey: string, promiseName: string, reqName: string, version: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+      { method: 'POST', body: JSON.stringify({ version }) },
+    ),
+```
+
+Add the scoped pair at the end of the `api` object, right after `updateScopedRequest` (`api.ts:146-158`, currently the last entry before the closing `}`):
+
+```ts
+  getScopedRequestVersion: (apiKey: string, project: string, environment: string, promiseName: string, reqName: string) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+    ),
+
+  setScopedRequestVersion: (
+    apiKey: string,
+    project: string,
+    environment: string,
+    promiseName: string,
+    reqName: string,
+    version: string,
+  ) =>
+    request<RequestVersionInfo>(
+      apiKey,
+      `/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/promises/${encodeURIComponent(promiseName)}/requests/${encodeURIComponent(reqName)}/version`,
+      { method: 'POST', body: JSON.stringify({ version }) },
+    ),
+```
+
+- [ ] **Step 3: Type-check**
+
+Run: `cd ui && npm run build`
+Expected: succeeds (`tsc -b && vite build`) - this is a types-and-client-only change, nothing consumes the new functions yet, so a clean build is the only signal available at this step.
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd ui && git add src/lib/types.ts src/lib/api.ts
+git commit -m "ui: add types and API client functions for promise version endpoints"
+```
+
+---
+
+## Task 10: `PromiseVersionBadge`, `RequestVersionDialog`, and `RequestsTable` wiring
+
+**Files:**
+- Create: `ui/src/components/PromiseVersionBadge.tsx`
+- Create: `ui/src/components/RequestVersionDialog.tsx`
+- Create: `ui/src/components/RequestVersionDialog.test.tsx`
+- Modify: `ui/src/components/RequestsTable.tsx`
+
+**Interfaces:**
+- Consumes: `PromiseRevision`, `RequestVersionInfo` (Task 9).
+- Produces: `<PromiseVersionBadge info={RequestVersionInfo | undefined} />`; `<RequestVersionDialog request versionInfo versions onOpenChange onSetVersion />`; `RequestsTable`'s two new optional props, `versionInfoFor?: (req: ResourceRequest) => RequestVersionInfo | undefined` and `onSetVersion?: (req: ResourceRequest, version: string) => Promise<void>`, plus `versionsFor?: (req: ResourceRequest) => PromiseRevision[] | undefined` - Task 11's `ServiceDetailPage` wires all three.
+
+This mirrors the request-editing feature's own shape exactly: a small presentational badge (`PromiseVersionBadge`, styled like the existing `StatusBadge`), a dialog that receives all its data as already-fetched props and never calls `api.*` itself (like `RequestEditDialog`), and two new optional `RequestsTable` props gating a new action icon + column (like `schemaFor`/`onSaveEdit` gating the pencil icon) - a caller that doesn't pass them sees no version column and no version action, unchanged from today.
+
+- [ ] **Step 1: Create `PromiseVersionBadge.tsx`**
+
+```tsx
+import { Badge } from '@/components/ui/badge'
+import type { RequestVersionInfo } from '@/lib/types'
+import { cn } from '@/lib/utils'
+
+// Styled like StatusBadge (colored dot + label) - the established "compact
+// evidence chip" idiom in this codebase. undefined means "not loaded yet"
+// (the caller is still fetching it), not "no versioning" - every Promise in
+// this repo carries a kratix.io/promise-version label, so there's no
+// meaningful "not applicable" state to distinguish from "loading".
+export function PromiseVersionBadge({ info }: { info: RequestVersionInfo | undefined }) {
+  if (!info) return <span className="text-sm text-muted-foreground">—</span>
+
+  return (
+    <Badge variant="outline" className="gap-1.5 font-normal">
+      <span className={cn('size-1.5 rounded-full', info.upgradeAvailable ? 'bg-amber-500' : 'bg-emerald-500')} />
+      <span className="font-mono">{info.boundVersion}</span>
+      {info.upgradeAvailable && (
+        <span className="text-muted-foreground">
+          &rarr; {info.latestVersion} available
+        </span>
+      )}
+    </Badge>
+  )
+}
+```
+
+- [ ] **Step 2: Create `RequestVersionDialog.tsx`**
+
+```tsx
+import { useState } from 'react'
+import { Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ApiError } from '@/lib/api'
+import type { PromiseRevision, RequestVersionInfo, ResourceRequest } from '@/lib/types'
+
+// Unlike RequestEditDialog, this dialog does surface its own error toast on
+// a failed move rather than leaving it to the caller: a 400 here specifically
+// means "your spec doesn't fit the target version's schema" (see
+// catalog.ValidateAgainstSchema in the broker) - a clear, actionable message
+// the design spec's validation goal exists to produce, so swallowing it
+// silently up to the caller would defeat that goal.
+export function RequestVersionDialog({
+  request,
+  versionInfo,
+  versions,
+  onOpenChange,
+  onSetVersion,
+}: {
+  request: ResourceRequest
+  versionInfo: RequestVersionInfo | undefined
+  versions: PromiseRevision[] | undefined
+  onOpenChange: (open: boolean) => void
+  onSetVersion: (version: string) => Promise<void>
+}) {
+  const [target, setTarget] = useState(versionInfo?.boundVersion ?? '')
+  const [saving, setSaving] = useState(false)
+
+  async function handleMove(e: React.FormEvent) {
+    e.preventDefault()
+    if (!target || target === versionInfo?.boundVersion) return
+    setSaving(true)
+    try {
+      await onSetVersion(target)
+      onOpenChange(false)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to move version')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-mono">{request.metadata.name}</DialogTitle>
+          <DialogDescription>
+            Currently bound to <span className="font-mono">{versionInfo?.boundVersion ?? '…'}</span>. Choose a version to
+            move to - forward (upgrade) or back (rollback).
+          </DialogDescription>
+        </DialogHeader>
+
+        <form className="space-y-4" onSubmit={handleMove}>
+          <div className="space-y-1.5">
+            <Label htmlFor="target-version">Version</Label>
+            {versions === undefined ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Loading versions…
+              </div>
+            ) : (
+              <Select value={target || undefined} onValueChange={setTarget}>
+                <SelectTrigger id="target-version" className="w-full">
+                  <SelectValue placeholder="Select…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {versions.map((v) => (
+                    <SelectItem key={v.version} value={v.version}>
+                      {v.version}
+                      {v.latest ? ' (latest)' : ''}
+                      {v.version === versionInfo?.boundVersion ? ' (current)' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="submit" disabled={saving || !target || target === versionInfo?.boundVersion}>
+              {saving && <Loader2 className="size-4 animate-spin" />}
+              Move to this version
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+```
+
+- [ ] **Step 3: Create `RequestVersionDialog.test.tsx`**
+
+Mirrors `RequestEditDialog.test.tsx`'s structure exactly (mocked `onSetVersion`, real rendering/interaction):
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { RequestVersionDialog } from './RequestVersionDialog'
+import { ApiError } from '@/lib/api'
+import type { PromiseRevision, RequestVersionInfo, ResourceRequest } from '@/lib/types'
+
+const request: ResourceRequest = {
+  apiVersion: 'demo.kratix.io/v1alpha1',
+  kind: 'Database',
+  metadata: { name: 'my-db', namespace: 'team-payments' },
+  spec: { size: '1Gi' },
+}
+
+const versionInfo: RequestVersionInfo = { boundVersion: 'v0.1.0', latestVersion: 'v0.2.0', upgradeAvailable: true }
+const versions: PromiseRevision[] = [
+  { version: 'v0.1.0', latest: false, createdAt: '2026-07-01T00:00:00Z' },
+  { version: 'v0.2.0', latest: true, createdAt: '2026-08-10T00:00:00Z' },
+]
+
+describe('RequestVersionDialog', () => {
+  it('shows a loading state while versions are still being fetched', () => {
+    render(
+      <RequestVersionDialog
+        request={request}
+        versionInfo={versionInfo}
+        versions={undefined}
+        onOpenChange={vi.fn()}
+        onSetVersion={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText(/loading versions/i)).toBeInTheDocument()
+  })
+
+  it('moves to the selected version and closes on success', async () => {
+    const user = userEvent.setup()
+    const onSetVersion = vi.fn().mockResolvedValue(undefined)
+    const onOpenChange = vi.fn()
+
+    render(
+      <RequestVersionDialog
+        request={request}
+        versionInfo={versionInfo}
+        versions={versions}
+        onOpenChange={onOpenChange}
+        onSetVersion={onSetVersion}
+      />,
+    )
+
+    await user.click(screen.getByRole('combobox'))
+    await user.click(screen.getByRole('option', { name: /v0\.2\.0/i }))
+    await user.click(screen.getByRole('button', { name: /move to this version/i }))
+
+    expect(onSetVersion).toHaveBeenCalledWith('v0.2.0')
+    await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+  })
+
+  it('disables the move button when the selected version is already the bound one', () => {
+    render(
+      <RequestVersionDialog
+        request={request}
+        versionInfo={versionInfo}
+        versions={versions}
+        onOpenChange={vi.fn()}
+        onSetVersion={vi.fn()}
+      />,
+    )
+
+    // target seeds from versionInfo.boundVersion (v0.1.0) - moving to the
+    // same version the request is already on should be a no-op, not a call.
+    expect(screen.getByRole('button', { name: /move to this version/i })).toBeDisabled()
+  })
+
+  it('stays open and shows the API error message when the move is rejected', async () => {
+    const user = userEvent.setup()
+    const onSetVersion = vi.fn().mockRejectedValue(new ApiError(400, 'spec is not valid for version v0.2.0: missing required field "size"'))
+    const onOpenChange = vi.fn()
+
+    render(
+      <RequestVersionDialog
+        request={request}
+        versionInfo={versionInfo}
+        versions={versions}
+        onOpenChange={onOpenChange}
+        onSetVersion={onSetVersion}
+      />,
+    )
+
+    await user.click(screen.getByRole('combobox'))
+    await user.click(screen.getByRole('option', { name: /v0\.2\.0/i }))
+    await user.click(screen.getByRole('button', { name: /move to this version/i }))
+
+    await vi.waitFor(() => expect(onSetVersion).toHaveBeenCalled())
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+})
+```
+
+- [ ] **Step 4: Run the new component tests**
+
+Run: `cd ui && npm test -- RequestVersionDialog.test.tsx`
+Expected: PASS (4/4). Note the last test can't assert the toast content without the test setup's toast mock - just confirming the dialog doesn't close and `onSetVersion` was actually invoked is enough to prove the error path doesn't silently succeed.
+
+- [ ] **Step 5: Wire the two new optional props into `RequestsTable.tsx`**
+
+Add to the imports (`RequestsTable.tsx:1-18`): `Tag` alongside the existing `Eye, Pencil, Trash2` import from `lucide-react`; `PromiseVersionBadge` and `RequestVersionDialog` component imports; `PromiseRevision, RequestVersionInfo` alongside the existing `JsonSchema, ResourceRequest` type import from `@/lib/types`.
+
+Extend `RequestsTableProps` (`RequestsTable.tsx:20-27`):
+
+```ts
+interface RequestsTableProps {
+  requests: ResourceRequest[]
+  onDelete: (name: string) => void
+  deletingName?: string | null
+  showKind?: boolean
+  schemaFor?: (req: ResourceRequest) => JsonSchema | undefined
+  onSaveEdit?: (req: ResourceRequest, spec: Record<string, unknown>) => Promise<void>
+  versionInfoFor?: (req: ResourceRequest) => RequestVersionInfo | undefined
+  versionsFor?: (req: ResourceRequest) => PromiseRevision[] | undefined
+  onSetVersion?: (req: ResourceRequest, version: string) => Promise<void>
+}
+```
+
+Destructure the three new props in the component signature (`RequestsTable.tsx:29`) alongside the existing ones, and add a fourth piece of row-selection state next to `editing` (`RequestsTable.tsx:30-32`):
+
+```ts
+const [managingVersion, setManagingVersion] = useState<ResourceRequest | null>(null)
+```
+
+Add a "Version" column header, only when `versionInfoFor` is supplied - right after the "Status" header (`RequestsTable.tsx:41`):
+
+```tsx
+{versionInfoFor && <TableHead>Version</TableHead>}
+```
+
+Add the corresponding cell, right after the Status cell (`RequestsTable.tsx:51-53`):
+
+```tsx
+{versionInfoFor && (
+  <TableCell>
+    <PromiseVersionBadge info={versionInfoFor(req)} />
+  </TableCell>
+)}
+```
+
+Add a new action icon in the actions `div` (`RequestsTable.tsx:58-76`), right after the Pencil block and before the Trash2 button:
+
+```tsx
+{onSetVersion && (
+  <Button variant="ghost" size="icon" className="size-8" onClick={() => setManagingVersion(req)}>
+    <Tag className="size-4" />
+  </Button>
+)}
+```
+
+Add the dialog render, right after the `RequestEditDialog` block (`RequestsTable.tsx:84-91`):
+
+```tsx
+{onSetVersion && managingVersion && (
+  <RequestVersionDialog
+    request={managingVersion}
+    versionInfo={versionInfoFor?.(managingVersion)}
+    versions={versionsFor?.(managingVersion)}
+    onOpenChange={(open) => !open && setManagingVersion(null)}
+    onSetVersion={(version) => onSetVersion(managingVersion, version)}
+  />
+)}
+```
+
+- [ ] **Step 6: Type-check and re-run the full UI test suite**
+
+Run: `cd ui && npm run build && npm test`
+Expected: build succeeds; all tests pass (existing `RequestEditDialog.test.tsx` plus the new `RequestVersionDialog.test.tsx`) - `RequestsTable` itself has no dedicated test file today (confirmed absent from `ui/src/components/*.test.tsx` before this task), so there's nothing existing to regress there; its new props are exercised indirectly once Task 11 wires them up in `ServiceDetailPage`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd ui && git add src/components/PromiseVersionBadge.tsx src/components/RequestVersionDialog.tsx src/components/RequestVersionDialog.test.tsx src/components/RequestsTable.tsx
+git commit -m "ui: add PromiseVersionBadge, RequestVersionDialog, and wire optional version props into RequestsTable"
+```
+
+---
+
+## Task 11: Wire version display and upgrade into `ServiceDetailPage`
+
+**Files:**
+- Modify: `ui/src/pages/ServiceDetailPage.tsx`
+
+**Interfaces:**
+- Consumes: `api.listPromiseVersions`, `api.getRequestVersion`, `api.getScopedRequestVersion`, `api.setRequestVersion`, `api.setScopedRequestVersion` (Task 9); `RequestsTable`'s `versionInfoFor`/`versionsFor`/`onSetVersion` props (Task 10).
+
+`ServiceDetailPage` already fetches `requests` on a 5s poll (`loadRequests`, `ServiceDetailPage.tsx:78-85`) and already branches flat-vs-scoped via `target` (used identically by `handleUpdate`/`handleDelete`/`handleSubmit`). This task adds a sibling per-row version fetch to that same poll cycle, plus a promise-wide versions list fetched once per cycle (not per row - shared across every row on this page, since they're all the same Promise), and wires both plus a `handleSetVersion` action into `RequestsTable`.
+
+- [ ] **Step 1: Add state for version info and the promise's versions list**
+
+Right after the existing `deletingName` state (`ServiceDetailPage.tsx:49`):
+
+```ts
+const [versionInfoByName, setVersionInfoByName] = useState<Record<string, RequestVersionInfo>>({})
+const [promiseVersions, setPromiseVersions] = useState<PromiseRevision[] | undefined>(undefined)
+```
+
+Add the import: extend the existing `import type { CatalogEntry, Environment, ResourceRequest } from '@/lib/types'`-style line (find the actual type-only import in `ServiceDetailPage.tsx`'s import block and add `PromiseRevision, RequestVersionInfo` to it).
+
+- [ ] **Step 2: Extend `loadRequests` to also fetch version info**
+
+Replace `loadRequests` (`ServiceDetailPage.tsx:78-85`):
+
+```ts
+const loadRequests = useCallback(() => {
+  if (!session) return
+  setRequestsError(null)
+  const call = target
+    ? api.listScopedRequests(session.apiKey, target.project, target.environment, name)
+    : api.listRequests(session.apiKey, name)
+  call
+    .then(async (reqs) => {
+      setRequests(reqs)
+
+      const versionEntries = await Promise.all(
+        reqs.map(async (req) => {
+          try {
+            const info = target
+              ? await api.getScopedRequestVersion(session.apiKey, target.project, target.environment, name, req.metadata.name)
+              : await api.getRequestVersion(session.apiKey, name, req.metadata.name)
+            return [req.metadata.name, info] as const
+          } catch {
+            // No binding yet (a narrow race just after creation), or the
+            // Promise has no revisions to speak of - either way, the badge
+            // just shows nothing for this row rather than erroring the page.
+            return null
+          }
+        }),
+      )
+      setVersionInfoByName(Object.fromEntries(versionEntries.filter((e): e is readonly [string, RequestVersionInfo] => e !== null)))
+    })
+    .catch((err) => setRequestsError(err instanceof Error ? err.message : 'Failed to load requests'))
+
+  api
+    .listPromiseVersions(session.apiKey, name)
+    .then(setPromiseVersions)
+    .catch(() => setPromiseVersions(undefined))
+}, [session, name, target?.project, target?.environment])
+```
+
+- [ ] **Step 3: Add `handleSetVersion`**
+
+Right after `handleUpdate` (`ServiceDetailPage.tsx:131-140`):
+
+```ts
+async function handleSetVersion(req: ResourceRequest, version: string) {
+  if (!session) return
+  if (target) {
+    await api.setScopedRequestVersion(session.apiKey, target.project, target.environment, name, req.metadata.name, version)
+  } else {
+    await api.setRequestVersion(session.apiKey, name, req.metadata.name, version)
+  }
+  toast.success(`Moved "${req.metadata.name}" to ${version}`)
+  loadRequests()
+}
+```
+
+Note this deliberately does **not** wrap the `api.set*RequestVersion` call in a try/catch the way `handleDelete` does - `RequestVersionDialog` (Task 10) already catches and toasts the error itself (see that component's own doc comment on why), and `handleUpdate` for spec edits follows this same no-catch-here convention already, so this stays consistent with its nearest sibling rather than the delete handler's.
+
+- [ ] **Step 4: Wire the three new props into `RequestsTable`**
+
+Extend the `<RequestsTable .../>` call (`ServiceDetailPage.tsx:292-298`):
+
+```tsx
+<RequestsTable
+  requests={requests}
+  onDelete={handleDelete}
+  deletingName={deletingName}
+  schemaFor={() => specSchema}
+  onSaveEdit={handleUpdate}
+  versionInfoFor={(req) => versionInfoByName[req.metadata.name]}
+  versionsFor={() => promiseVersions}
+  onSetVersion={handleSetVersion}
+/>
+```
+
+- [ ] **Step 5: Type-check, then manually verify against `BROKER_FAKE_K8S=1`**
+
+Run: `cd ui && npm run build`
+Expected: succeeds.
+
+```bash
+cd broker && BROKER_FAKE_K8S=1 go run ./cmd/broker &
+cd ui && npm run dev &
+```
+
+Open the UI (default `http://localhost:5173`), sign in with `demo-key-payments`, navigate to the `database` service. Expected: the `example-database` row shows a badge reading `v0.1.0 → v0.2.0 available`; clicking the new tag icon opens a dialog with a `v0.1.0`/`v0.2.0` selector defaulted to the current version; selecting `v0.2.0` and clicking "Move to this version" succeeds, the dialog closes, and the badge updates to plain `v0.2.0` (no more "available" suffix) on the next poll tick. Kill both background processes when done (`kill %1 %2` or equivalent).
+
+- [ ] **Step 6: Run the full UI test suite once more**
+
+Run: `cd ui && npm test`
+Expected: PASS - this task doesn't add new test files (the manual check above is this task's verification, matching how the equivalent request-editing plan task's UI wiring work was verified), so this just confirms nothing regressed.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd ui && git add src/pages/ServiceDetailPage.tsx
+git commit -m "ui: show bound Promise version and let a request be moved to another, on ServiceDetailPage"
+```
