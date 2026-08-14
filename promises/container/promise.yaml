@@ -3,7 +3,15 @@ kind: Promise
 metadata:
   creationTimestamp: null
   labels:
-    kratix.io/promise-version: v0.0.1
+    kratix.io/promise-version: v0.1.0
+    marketplace.kratix.io/visible: "true"
+  annotations:
+    marketplace.kratix.io/display-name: Container
+    marketplace.kratix.io/description: A single containerized workload, sized and configured on request.
+    marketplace.kratix.io/owner: platform-team
+    marketplace.kratix.io/lifecycle: experimental
+    marketplace.kratix.io/support: "#platform-eng"
+    marketplace.kratix.io/policy: internal
   name: container
 spec:
   api:
@@ -26,16 +34,42 @@ spec:
             properties:
               spec:
                 properties:
-                  cpu:
-                    type: string
                   image:
                     type: string
-                  memory:
-                    type: string
-                  port:
-                    type: integer
+                    description: Container image, including tag (e.g. "nginx:1.27").
                   replicas:
                     type: integer
+                    minimum: 1
+                    default: 1
+                  cpu:
+                    type: string
+                    pattern: '^[0-9]+m?$'
+                    description: CPU request/limit as a Kubernetes quantity (e.g. "500m", "2").
+                  memory:
+                    type: string
+                    pattern: '^[0-9]+(Ei|Pi|Ti|Gi|Mi|Ki)?$'
+                    description: Memory request/limit as a Kubernetes quantity (e.g. "512Mi", "2Gi").
+                  port:
+                    type: integer
+                    minimum: 1
+                    maximum: 65535
+                    description: Container port to expose. When set, a Service is also created.
+                  env:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        value:
+                          type: string
+                      required:
+                      - name
+                      - value
+                required:
+                - image
+                - cpu
+                - memory
                 type: object
             type: object
         served: true
