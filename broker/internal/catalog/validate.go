@@ -13,11 +13,12 @@ import (
 // the actual field-level schema). Returns one human-readable problem per
 // violation, empty when spec is valid.
 //
-// Checks properties/type/enum/required only - the subset every Promise in
-// this repo's schemas actually uses (see promises/*/promise.yaml).
-// Deliberately not a full JSON Schema validator, to avoid pulling in
-// k8s.io/apiextensions-apiserver's structural-schema/CEL machinery for
-// schemas this simple.
+// Checks properties/type/enum/required, plus rejecting fields the schema
+// doesn't declare (unless it opts into x-kubernetes-preserve-unknown-fields)
+// - the subset every Promise in this repo's schemas actually uses (see
+// promises/*/promise.yaml). Deliberately not a full JSON Schema validator,
+// to avoid pulling in k8s.io/apiextensions-apiserver's
+// structural-schema/CEL machinery for schemas this simple.
 func ValidateAgainstSchema(schemaObj map[string]interface{}, spec map[string]interface{}) []string {
 	specSchema, _, _ := unstructured.NestedMap(schemaObj, "properties", "spec")
 	if specSchema == nil {
@@ -47,6 +48,19 @@ func validateObject(fieldSchema map[string]interface{}, value map[string]interfa
 			continue
 		}
 		problems = append(problems, validateValue(propSchema, propValue, path+"."+name)...)
+	}
+
+	// A field present in the spec but not declared in this schema's
+	// properties won't fit the target revision - flag it, unless the
+	// schema explicitly opts into accepting undeclared fields (mirrors
+	// apiextensions' x-kubernetes-preserve-unknown-fields).
+	preserveUnknown, _, _ := unstructured.NestedBool(fieldSchema, "x-kubernetes-preserve-unknown-fields")
+	if !preserveUnknown {
+		for name := range value {
+			if _, declared := properties[name]; !declared {
+				problems = append(problems, fmt.Sprintf("unknown field %q for this version", path+"."+name))
+			}
+		}
 	}
 
 	return problems

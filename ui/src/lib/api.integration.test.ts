@@ -10,8 +10,32 @@ import { api, ApiError } from './api'
 // Kubernetes API instead of a real cluster, so no kind cluster is needed).
 const API_KEY = 'demo-key-payments' // team "payments", per broker/config/teams.yaml
 
+// Same base-URL construction as api.ts's request() - see vitest.globalSetup.ts
+// (fixed port, matches .env.test's VITE_BROKER_URL) and BROKER_CORS_ORIGIN=''
+// so no browser-only preflight is involved here.
+const BASE_URL = `${import.meta.env.VITE_BROKER_URL ?? ''}/api`
+
 function uniqueName() {
   return `ui-it-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+// Raw fetch, not the api.ts helpers: these three routes
+// (GET .../versions, GET/POST .../requests/{reqName}/version) don't have
+// TypeScript wrappers yet (a separate, already-planned follow-up), and this
+// test's job is to prove the broker's HTTP contract - route registration,
+// auth, JSON shape - independent of any client-side wrapper.
+async function rawGet(path: string) {
+  const res = await fetch(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${API_KEY}` } })
+  return { status: res.status, body: await res.json() }
+}
+
+async function rawPost(path: string, body: unknown) {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: res.status, body: await res.json() }
 }
 
 describe('api (real broker, fake K8s backend)', () => {
@@ -41,5 +65,40 @@ describe('api (real broker, fake K8s backend)', () => {
 
   it('surfaces a real 401 ApiError for an invalid API key', async () => {
     await expect(api.listPromises('not-a-real-key')).rejects.toMatchObject({ status: 401 } satisfies Partial<ApiError>)
+  })
+
+  it('lists both revisions of the seeded database Promise, with v0.2.0 marked latest', async () => {
+    const { status, body } = await rawGet('/promises/database/versions')
+    expect(status).toBe(200)
+    expect(body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ version: 'v0.1.0', latest: false }),
+        expect.objectContaining({ version: 'v0.2.0', latest: true }),
+      ]),
+    )
+  })
+
+  // These three routes (GET .../versions, GET/POST .../requests/{reqName}/version)
+  // are covered by Go handler-level unit tests too, but only over HTTP does a
+  // route-registration typo or path collision actually show up - see the
+  // seeded fixture in broker/cmd/broker/fake_seed.go: example-database in
+  // team-payments, pinned to v0.1.0 via its ResourceBinding, with v0.2.0
+  // (adds optional highAvailability) as latest. Sequenced in one `it` (not
+  // three) because the third assertion mutates that shared fixture's
+  // binding - fine here since BROKER_FAKE_K8S state is in-memory and reset
+  // on every broker process restart, so a rerun always starts from the same
+  // seeded state regardless of this test's internal order.
+  it('reports and then moves example-database off its pinned v0.1.0 binding', async () => {
+    const before = await rawGet('/promises/database/requests/example-database/version')
+    expect(before.status).toBe(200)
+    expect(before.body).toEqual({ boundVersion: 'v0.1.0', latestVersion: 'v0.2.0', upgradeAvailable: true })
+
+    const moved = await rawPost('/promises/database/requests/example-database/version', { version: 'v0.2.0' })
+    expect(moved.status).toBe(200)
+    expect(moved.body).toEqual({ boundVersion: 'v0.2.0', latestVersion: 'v0.2.0', upgradeAvailable: false })
+
+    const after = await rawGet('/promises/database/requests/example-database/version')
+    expect(after.status).toBe(200)
+    expect(after.body).toEqual({ boundVersion: 'v0.2.0', latestVersion: 'v0.2.0', upgradeAvailable: false })
   })
 })
