@@ -25,10 +25,37 @@ have something to simplify.
 - Follows the same tenancy model as every other Promise here: no
   team/environment/businessUnit fields on the CRD itself, isolation comes
   entirely from which namespace the resource is requested into (see
-  `promises/environment/promise.yaml`).
+  `promises/environment/promise.yaml`). **This applies to the `Container`
+  resource itself, on the platform cluster - not to the `Deployment`/
+  `Service` the pipeline emits.** See "Known limitation" below.
 - cpu/memory ceilings are enforced by the existing Capsule `Tenant`
   `LimitRange` (set via `BusinessUnit`, `promises/business-unit/promise.yaml`),
   not by new validation code in this Promise.
+
+## Known limitation
+
+The worker cluster (`kind-worker`, Destination `worker-1` - where `Container`'s
+`Deployment`/`Service` land, per the README's "this is where scheduled
+workloads normally land") has no per-team/environment namespaces today.
+Only the platform cluster gets those, via `Team`/`Environment`/
+`BusinessUnit`'s Capsule `Tenant`/`Namespace` objects. `Database`'s pipeline
+works around this identically: it hardcodes `namespace: "default"` on the
+worker side regardless of which namespace the `Database` resource itself
+lives in on the platform cluster - a simplification its own README flags
+as tutorial-level, not the "real" multi-tenant pattern.
+
+`Container` follows the same precedent for v0.1.0: the pipeline hardcodes
+`namespace: "default"` for the `Deployment`/`Service` it writes. The
+`Container` resource itself is still namespace-scoped (and RBAC'd) on the
+platform cluster like everything else - only the *resulting workload* on
+the worker cluster is not yet tenant-isolated.
+
+**This is an extension point, not a design decision to revisit lightly:**
+making the worker cluster tenant-aware means deciding how namespaces (and
+their RBAC/quotas) get mirrored onto *any* worker destination, which is a
+multi-cluster problem bigger than `Container` alone - other Promises
+targeting the worker cluster hit the same gap. Worth a design of its own
+once more than one workload-producing Promise exists.
 
 ## Non-goals
 
@@ -147,7 +174,9 @@ Resource-configure workflow only (no promise-level dependency), Python SDK
 2. Write a `Deployment` manifest to `/kratix/output` - one container named
    after the resource, image/replicas/resources/env populated from the
    spec above, resource requests and limits both set to the given
-   cpu/memory (no separate request-vs-limit distinction for v0.1.0).
+   cpu/memory (no separate request-vs-limit distinction for v0.1.0),
+   namespace hardcoded to `default` (see "Known limitation" above -
+   matches `Database`'s existing precedent on the worker cluster).
 3. If `spec.port` is set, also write a `Service` manifest (`ClusterIP`,
    single port forwarding to the container port) so the workload is
    reachable from other resources in the same namespace.
