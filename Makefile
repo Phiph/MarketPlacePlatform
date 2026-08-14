@@ -200,6 +200,15 @@ argo-register-worker: argo-install ## Register kind-worker with Argo CD as a rea
 		--dry-run=client -o yaml | kubectl --context $(PLATFORM_CTX) apply -f -
 	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) label secret $(ARGO_WORKER_CLUSTER_NAME)-cluster argocd.argoproj.io/secret-type=cluster --overwrite
 
+.PHONY: argo-admin-password
+argo-admin-password: ## Print the Argo CD initial admin password
+	@kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
+
+.PHONY: argo-ui
+argo-ui: ## Port-forward the Argo CD UI to https://localhost:8080 (Ctrl-C to stop)
+	@echo "Argo CD UI: https://localhost:8080 (user: admin, password: make argo-admin-password)"
+	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) port-forward svc/argocd-server 8080:443
+
 .PHONY: restart
 restart: down up ## Delete and recreate both clusters from scratch
 
@@ -223,6 +232,9 @@ status: ## Show the state of both clusters
 	@echo ""
 	@echo "== worker ($(WORKER_CTX)): flux-system =="
 	@kubectl --context $(WORKER_CTX) get pods -n flux-system
+	@echo ""
+	@echo "== platform ($(PLATFORM_CTX)): argocd =="
+	@kubectl --context $(PLATFORM_CTX) get pods -n argocd
 
 .PHONY: platform-context
 platform-context: ## Point kubectl at the platform cluster
