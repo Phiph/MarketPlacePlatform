@@ -1581,6 +1581,8 @@ git commit -m "rbac: grant teams get/list/watch/patch on their own namespace's R
 - Consumes: `catalog.PromiseRevisionGVR`, `catalog.LabelPromiseName`, `catalog.LabelLatestRevision`, `catalog.LabelPromiseVersion` (Tasks 1-2); `bindingapi.GVR` (Task 4).
 - Produces: an `example-database` request, pinned to `v0.1.0`, while the `database` Promise itself is now at `v0.2.0` - a concrete upgrade-available scenario the `BROKER_FAKE_K8S=1` HTTP tier (and later, a UI dev server pointed at it) can exercise without a cluster.
 
+**A real schema difference between the two revisions, not just two labels wrapping identical schemas.** `v0.1.0`'s schema is exactly the real `database` Promise's current schema (`promises/database/promise.yaml`: `size` only, required, enum-constrained) - so the "old" revision fixture matches production, not an invented shape. `v0.2.0` adds one new field, `highAvailability` (optional boolean, defaulting to unset/false) - a Promise author shipping HA support as a new capability without breaking anyone still on `v0.1.0`. This makes the fixture's upgrade scenario mean something concretely testable: `example-database`'s stored spec (`{"size": "1Gi"}`) is valid under both schemas (the field is optional, not required), so `ValidateAgainstSchema` allows the move and a client can then set `highAvailability: true` on a follow-up edit once upgraded - a realistic "upgrade first, opt into the new capability second" flow, and the natural next thing to try manually against `BROKER_FAKE_K8S=1` after Step 3's smoke test.
+
 - [ ] **Step 1: Confirm the current fake-backed HTTP tests pass before changing the fixtures**
 
 ```bash
@@ -1646,17 +1648,63 @@ func fakeDatabasePromise() *unstructured.Unstructured {
 			},
 		},
 		"spec": map[string]interface{}{
-			"api": fakeDatabaseCRD(),
+			"api": fakeDatabaseCRDv2(),
 		},
 	}}
 }
 
-// fakeDatabaseCRD is the CustomResourceDefinition manifest shared by the
-// live Promise (spec.api) and each PromiseRevision fixture below
-// (spec.promiseSpec.api) - same shape either way, matching how Kratix
-// itself snapshots a Promise's spec verbatim into each revision it
-// creates.
-func fakeDatabaseCRD() map[string]interface{} {
+// fakeDatabaseCRDv1 is the CustomResourceDefinition manifest for the
+// database Promise's v0.1.0 revision - deliberately identical to the real
+// Promise's current schema (promises/database/promise.yaml: size only,
+// required, enum-constrained), so the "old" revision fixture matches
+// production rather than an invented shape.
+func fakeDatabaseCRDv1() map[string]interface{} {
+	return map[string]interface{}{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"spec": map[string]interface{}{
+			"group": "demo.kratix.io",
+			"names": map[string]interface{}{
+				"kind":   "Database",
+				"plural": "databases",
+			},
+			"scope": "Namespaced",
+			"versions": []interface{}{
+				map[string]interface{}{
+					"name":    "v1alpha1",
+					"served":  true,
+					"storage": true,
+					"schema": map[string]interface{}{
+						"openAPIV3Schema": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"spec": map[string]interface{}{
+									"type":     "object",
+									"required": []interface{}{"size"},
+									"properties": map[string]interface{}{
+										"size": map[string]interface{}{
+											"type": "string",
+											"enum": []interface{}{"1Gi", "5Gi", "10Gi", "50Gi"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// fakeDatabaseCRDv2 is the database Promise's v0.2.0 revision: the same
+// shape as v1, plus one new optional field, highAvailability - a Promise
+// author shipping HA support as a new capability without breaking any
+// request still on v0.1.0 (the field is optional, not required, so a v0.1.0
+// spec with no highAvailability key remains valid under this schema too).
+// This is also the live Promise's current schema (fakeDatabasePromise's
+// spec.api, above) - v0.2.0 is "latest".
+func fakeDatabaseCRDv2() map[string]interface{} {
 	return map[string]interface{}{
 		"apiVersion": "apiextensions.k8s.io/v1",
 		"kind":       "CustomResourceDefinition",
@@ -1696,6 +1744,16 @@ func fakeDatabaseCRD() map[string]interface{} {
 	}
 }
 
+// fakeDatabaseRevisionSchemas maps each simulated revision to its schema
+// builder, so fakeDatabaseRevision can look up the right one per version -
+// v0.1.0 and v0.2.0 genuinely differ (see fakeDatabaseCRDv1/v2 above),
+// unlike a single shared schema wrapped in two differently-labeled
+// revisions.
+var fakeDatabaseRevisionSchemas = map[string]func() map[string]interface{}{
+	"v0.1.0": fakeDatabaseCRDv1,
+	"v0.2.0": fakeDatabaseCRDv2,
+}
+
 func fakeDatabaseRevision(version string, latest bool) *unstructured.Unstructured {
 	labels := map[string]interface{}{catalog.LabelPromiseName: "database"}
 	if latest {
@@ -1711,7 +1769,7 @@ func fakeDatabaseRevision(version string, latest bool) *unstructured.Unstructure
 		"spec": map[string]interface{}{
 			"version": version,
 			"promiseSpec": map[string]interface{}{
-				"api": fakeDatabaseCRD(),
+				"api": fakeDatabaseRevisionSchemas[version](),
 			},
 		},
 	}}
@@ -1757,10 +1815,25 @@ cd broker && go build ./... && BROKER_FAKE_K8S=1 go run ./cmd/broker &
 sleep 1
 curl -s -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/versions
 curl -s -H "Authorization: Bearer demo-key-payments" localhost:8878/api/promises/database/requests/example-database/version
-kill %1
 ```
 
 Expected: the first `curl` returns two revisions (`v0.1.0`, `v0.2.0`, the latter `"latest": true`); the second returns `{"boundVersion":"v0.1.0","latestVersion":"v0.2.0","upgradeAvailable":true}`.
+
+Then exercise the actual upgrade-and-opt-in-to-HA flow this fixture was built for:
+
+```bash
+curl -X POST -H "Authorization: Bearer demo-key-payments" \
+  -d '{"version":"v0.2.0"}' \
+  localhost:8878/api/promises/database/requests/example-database/version
+
+curl -X PUT -H "Authorization: Bearer demo-key-payments" \
+  -d '{"spec":{"size":"1Gi","highAvailability":true}}' \
+  localhost:8878/api/promises/database/requests/example-database
+
+kill %1
+```
+
+Expected: the `POST .../version` call succeeds (`example-database`'s stored spec, `{"size":"1Gi"}`, validates fine against v0.2.0's schema since `highAvailability` is optional) and returns `{"boundVersion":"v0.2.0","latestVersion":"v0.2.0","upgradeAvailable":false}`; the follow-up `PUT` (the existing edit endpoint) then turns HA on now that the request is running against a revision whose schema supports it.
 
 - [ ] **Step 4: Run the full Go test suite once more**
 
