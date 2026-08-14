@@ -87,7 +87,6 @@ up: deps registry-start ## Create both clusters, install Kratix, and provision t
 	$(MAKE) --no-print-directory kratix-worker
 	$(MAKE) --no-print-directory kratix-platform-destination
 	$(MAKE) --no-print-directory metrics-server
-	$(MAKE) --no-print-directory argo-install
 	$(MAKE) --no-print-directory argo-register-worker
 	$(MAKE) --no-print-directory demo-setup
 	@echo ""
@@ -169,8 +168,7 @@ kratix-platform-destination: flux-platform ## Register the platform cluster itse
 		--wait --timeout 5m
 	kubectl --context $(PLATFORM_CTX) wait destination platform-cluster --for=condition=Ready --timeout=300s
 
-##@ Argo CD (read-only status/log engine, not a delivery mechanism - see
-##@ docs/superpowers/specs/2026-08-14-container-workload-logs-design.md)
+##@ Argo CD (read-only status/log engine - see docs/superpowers/specs/2026-08-14-container-workload-logs-design.md)
 
 .PHONY: argo-install
 argo-install: ## Install Argo CD on the platform cluster (Helm chart: argo/argo-cd)
@@ -192,6 +190,8 @@ argo-register-worker: argo-install ## Register kind-worker with Argo CD as a rea
 	if [ -z "$$token" ]; then echo "Timed out waiting for argocd-manager-token"; exit 1; fi; \
 	worker_server=$$(kind get kubeconfig --internal --name $(WORKER_CLUSTER) | yq '.clusters[0].cluster.server'); \
 	worker_ca=$$(kind get kubeconfig --internal --name $(WORKER_CLUSTER) | yq '.clusters[0].cluster.certificate-authority-data'); \
+	if [ -z "$$worker_server" ] || [ "$$worker_server" = "null" ]; then echo "Could not read worker API server address"; exit 1; fi; \
+	if [ -z "$$worker_ca" ] || [ "$$worker_ca" = "null" ]; then echo "Could not read worker CA data"; exit 1; fi; \
 	worker_config=$$(printf '{"bearerToken":"%s","tlsClientConfig":{"insecure":false,"caData":"%s"}}' "$$token" "$$worker_ca"); \
 	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) create secret generic $(ARGO_WORKER_CLUSTER_NAME)-cluster \
 		--from-literal=name=$(ARGO_WORKER_CLUSTER_NAME) \
@@ -208,6 +208,8 @@ argo-admin-password: ## Print the Argo CD initial admin password
 argo-ui: ## Port-forward the Argo CD UI to http://localhost:8080 (Ctrl-C to stop)
 	@echo "Argo CD UI: http://localhost:8080 (user: admin, password: make argo-admin-password)"
 	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) port-forward svc/argocd-server 8080:443
+
+##@ Cluster lifecycle
 
 .PHONY: restart
 restart: down up ## Delete and recreate both clusters from scratch
