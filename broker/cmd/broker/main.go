@@ -37,9 +37,19 @@ func main() {
 		log.Fatalf("loading team directory: %v", err)
 	}
 
-	clients, err := k8sclient.New()
-	if err != nil {
-		log.Fatalf("building Kubernetes clients: %v", err)
+	var clients *k8sclient.Clients
+	if os.Getenv("BROKER_FAKE_K8S") == "1" {
+		// In-memory fake Kubernetes backend - no kubeconfig, no cluster.
+		// Runs the real broker binary (same routing/handlers/JSON as
+		// production) over real HTTP for fast, cluster-free testing - see
+		// Makefile's broker-run-fake target.
+		clients = k8sclient.NewFake(fakeGVRToListKind, fakeSeedObjects()...)
+		log.Print("BROKER_FAKE_K8S=1: serving from an in-memory fake Kubernetes backend, not a real cluster")
+	} else {
+		clients, err = k8sclient.New()
+		if err != nil {
+			log.Fatalf("building Kubernetes clients: %v", err)
+		}
 	}
 
 	server := api.New(clients, dir, corsOrigin)

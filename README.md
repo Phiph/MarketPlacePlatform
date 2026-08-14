@@ -112,8 +112,20 @@ so a future marketplace UI (or anything else) has a friendly contract to
 build against instead of talking to `kubectl`/the Kubernetes API directly.
 
 ```bash
-make up                                                          # if you haven't already
-make promise-demo                                                # installs the database Promise, so there's something to browse
+make up          # creates the clusters AND provisions the full demo below - idempotent
+make broker-run  # starts the broker on :8878, talking to kind-platform
+```
+
+`make up`'s last step is `demo-setup`, which installs every Promise the demo needs
+(business-unit - pulling in Capsule as a dependency - team, project, environment; database
+comes from `promise-demo` earlier in `up`), submits a BusinessUnit + Team request per
+`broker/config/teams.yaml` (`make broker-provision-teams`), and seeds an example
+`checkout-service` Project with a `dev` Environment under it - so there's always something to
+browse, not just an empty catalog. Each piece is still its own target if you want to run part
+of this by hand (e.g. re-provisioning teams after editing `teams.yaml`):
+
+```bash
+make promise-demo                                                # installs the database Promise + example request
 make promise-build promise-load PROMISE_DIR=promises/business-unit   # installs Capsule + the business-unit Promise
 kubectl --context kind-platform apply -f promises/business-unit/promise.yaml
 make promise-build promise-load PROMISE_DIR=promises/team        # installs the team Promise
@@ -123,7 +135,8 @@ make promise-build promise-load PROMISE_DIR=promises/project     # installs the 
 kubectl --context kind-platform apply -f promises/project/promise.yaml
 make promise-build promise-load PROMISE_DIR=promises/environment # installs the environment Promise
 kubectl --context kind-platform apply -f promises/environment/promise.yaml
-make broker-run              # starts the broker on :8878, talking to kind-platform
+kubectl --context kind-platform apply -f promises/project/example-resource.yaml     # example Project
+kubectl --context kind-platform apply -f promises/environment/example-resource.yaml # example Environment
 ```
 
 **Multi-tenancy** is two levels: **business units** and **teams** within them. Each team gets

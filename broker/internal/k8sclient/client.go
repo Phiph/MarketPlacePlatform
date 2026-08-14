@@ -21,8 +21,17 @@ type Clients struct {
 	// Groups builds per-team impersonated clients (see impersonate.go) -
 	// how every resource-request call is scoped to the calling team's
 	// namespace, with Capsule (not application code) enforcing the
-	// boundary.
-	Groups *GroupClients
+	// boundary. Interface (rather than *GroupClients directly) so tests can
+	// substitute a stub that hands back a fake dynamic.Interface without
+	// going through real impersonation/REST plumbing - *GroupClients
+	// satisfies it unchanged.
+	Groups GroupResolver
+}
+
+// GroupResolver builds a dynamic.Interface scoped to a Kubernetes Group.
+// See GroupClients.ForGroup for the real implementation.
+type GroupResolver interface {
+	ForGroup(group string) (dynamic.Interface, error)
 }
 
 // New builds Clients from a kubeconfig, honouring the standard KUBECONFIG

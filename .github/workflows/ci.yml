@@ -1,0 +1,42 @@
+name: CI
+
+# Fast, cluster-free checks only: the broker's Go tests (in-memory fakes,
+# no Kubernetes) and the UI's build/lint/tests (the UI test tier itself
+# also spins up the real broker binary against an in-memory fake backend -
+# see ui/vitest.globalSetup.ts - so it needs Go too, not just Node).
+#
+# The real-cluster (kind) integration tests - `make broker-test-integration`
+# - are deliberately NOT run here: they need a live multi-cluster Kratix
+# environment (`make up`) that takes minutes to provision and isn't
+# available on a hosted runner today. Run those locally instead.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  broker-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: broker/go.mod
+      - run: make broker-test
+
+  ui-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: broker/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: cd ui && npm ci
+      - run: cd ui && npm run build
+      - run: cd ui && npm run lint
+      - run: cd ui && npm test
