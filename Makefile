@@ -205,8 +205,8 @@ argo-admin-password: ## Print the Argo CD initial admin password
 	@kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 
 .PHONY: argo-ui
-argo-ui: ## Port-forward the Argo CD UI to https://localhost:8080 (Ctrl-C to stop)
-	@echo "Argo CD UI: https://localhost:8080 (user: admin, password: make argo-admin-password)"
+argo-ui: ## Port-forward the Argo CD UI to http://localhost:8080 (Ctrl-C to stop)
+	@echo "Argo CD UI: http://localhost:8080 (user: admin, password: make argo-admin-password)"
 	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) port-forward svc/argocd-server 8080:443
 
 .PHONY: restart

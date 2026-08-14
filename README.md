@@ -328,7 +328,7 @@ make logs-flux-worker    # tail Flux on the worker cluster
 make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination)
 make k9s-platform        # k9s on the platform cluster
 make k9s-worker          # k9s on the worker cluster
-make argo-ui              # port-forward the Argo CD UI to https://localhost:8080
+make argo-ui              # port-forward the Argo CD UI to http://localhost:8080
 make argo-admin-password  # print the Argo CD initial admin password
 make restart             # delete and recreate both clusters from scratch
 make down                # delete the clusters, keep the local registry
