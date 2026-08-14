@@ -73,7 +73,7 @@ deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s
 	@$(MAKE) --no-print-directory $(KRATIX_CLI)
 
 .PHONY: up
-up: deps registry-start ## Create both clusters and install Kratix via Helm (idempotent)
+up: deps registry-start ## Create both clusters, install Kratix, and provision the full demo (all Promises, teams, example project/environment/database) - idempotent
 	$(MAKE) --no-print-directory clusters
 	$(MAKE) --no-print-directory registry-configure
 	$(MAKE) --no-print-directory cert-manager
@@ -82,6 +82,7 @@ up: deps registry-start ## Create both clusters and install Kratix via Helm (ide
 	$(MAKE) --no-print-directory kratix-worker
 	$(MAKE) --no-print-directory kratix-platform-destination
 	$(MAKE) --no-print-directory metrics-server
+	$(MAKE) --no-print-directory demo-setup
 	@echo ""
 	@echo "Local registry:   localhost:$(REGISTRY_PORT)"
 	@echo "Platform context: $(PLATFORM_CTX)"
@@ -292,6 +293,45 @@ promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_D
 	@echo "Watch the request:  kubectl --context $(PLATFORM_CTX) get databases.demo.kratix.io example-database -w"
 	@echo "Watch the worker:   kubectl --context $(WORKER_CTX) get pods -w"
 
+# Installs every Promise the broker demo needs (business-unit, team, project,
+# environment - database comes from promise-demo above) and seeds them with
+# example requests, so `make up` alone leaves something to browse instead of
+# an empty catalog. business-unit/team objects come from broker-provision-teams
+# (broker/config/teams.yaml is the actual source of truth the broker's own
+# auth uses - promises/business-unit and promises/team's own example-resource.yaml
+# describe the identical "platform-org"/"payments" objects but aren't applied
+# here separately, to avoid two sources of truth for the same data); project
+# and environment's example-resource.yaml are applied directly since nothing
+# else provisions them. See README.md's "Marketplace broker API" section -
+# this target automates exactly that sequence.
+.PHONY: demo-setup
+demo-setup: promise-demo ## Install every demo Promise, provision teams, and seed example project/environment requests
+	@for dir in business-unit team project environment; do \
+		$(MAKE) --no-print-directory promise-build promise-load PROMISE_DIR=promises/$$dir; \
+		kubectl --context $(PLATFORM_CTX) apply -f promises/$$dir/promise.yaml; \
+	done
+	@for crd in businessunits teams projects environments; do \
+		echo "Waiting for $$crd.demo.kratix.io to be established..."; \
+		for i in $$(seq 1 60); do \
+			kubectl --context $(PLATFORM_CTX) get crd $$crd.demo.kratix.io >/dev/null 2>&1 && break; \
+			sleep 2; \
+		done; \
+	done
+	$(MAKE) --no-print-directory broker-provision-teams
+	@echo "Waiting for team-checkout's namespace (the example project/environment live there)..."
+	@for i in $$(seq 1 60); do \
+		kubectl --context $(PLATFORM_CTX) get ns team-checkout >/dev/null 2>&1 && break; \
+		sleep 2; \
+	done
+	kubectl --context $(PLATFORM_CTX) apply -f promises/project/example-resource.yaml
+	kubectl --context $(PLATFORM_CTX) apply -f promises/environment/example-resource.yaml
+	@echo ""
+	@echo "Example data ready to browse:"
+	@echo "  Database:    example-database (default namespace)"
+	@echo "  Project:     checkout-service (team-checkout namespace)"
+	@echo "  Environment: dev, under checkout-service"
+	@echo "  Teams:       payments, checkout (business unit platform-org) - see broker/config/teams.yaml for API keys"
+
 ##@ Broker API
 
 .PHONY: broker-build
@@ -307,7 +347,7 @@ broker-test: ## Run the broker's Go tests (fast - no cluster needed)
 	cd broker && go test ./...
 
 .PHONY: broker-test-integration
-broker-test-integration: ## Run the broker's real-cluster integration tests - needs `make up` + `make broker-provision-teams` + `make promise-demo` already done
+broker-test-integration: ## Run the broker's real-cluster integration tests - needs `make up` already done (it now provisions everything these tests need)
 	cd broker && BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) go test -tags=integration ./...
 
 .PHONY: broker-run-fake
