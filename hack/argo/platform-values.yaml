@@ -1,0 +1,19 @@
+# Values for `helm install argocd argo-cd` on the platform cluster.
+# Argo CD here is a read-only status/log engine behind the broker, not a
+# second GitOps delivery mechanism - see
+# docs/superpowers/specs/2026-08-14-container-workload-logs-design.md.
+# Flux remains the only thing that applies/prunes workload resources; every
+# Application this platform creates uses manual sync (no automated block).
+
+# No SSO/Dex - per-team access is handled with local Argo accounts in a
+# later plan, not an identity provider.
+dex:
+  enabled: false
+
+configs:
+  params:
+    # Plain HTTP inside the cluster - matches this repo's existing "insecure:
+    # true" pattern for MinIO (hack/kratix/platform-values.yaml); there's no
+    # cert-manager-issued cert for argocd-server and none is needed for local
+    # dev. `make argo-ui` (Task 4) reaches it via port-forward.
+    server.insecure: true

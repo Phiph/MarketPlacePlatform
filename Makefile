@@ -45,6 +45,11 @@ KRATIX_CLI         := bin/kratix
 KRATIX_CLI_OS       = $(shell uname -s)
 KRATIX_CLI_ARCH      = $(shell uname -m)
 
+ARGO_HELM_REPO         := https://argoproj.github.io/argo-helm
+ARGO_CD_CHART_VERSION  ?= 10.3.3
+ARGO_NAMESPACE         := argocd
+ARGO_WORKER_CLUSTER_NAME := worker-1
+
 PROMISE_DIR ?= promises/database
 
 INFRA_DIR      ?= clusters/platform
@@ -82,6 +87,8 @@ up: deps registry-start ## Create both clusters, install Kratix, and provision t
 	$(MAKE) --no-print-directory kratix-worker
 	$(MAKE) --no-print-directory kratix-platform-destination
 	$(MAKE) --no-print-directory metrics-server
+	$(MAKE) --no-print-directory argo-install
+	$(MAKE) --no-print-directory argo-register-worker
 	$(MAKE) --no-print-directory demo-setup
 	@echo ""
 	@echo "Local registry:   localhost:$(REGISTRY_PORT)"
@@ -161,6 +168,16 @@ kratix-platform-destination: flux-platform ## Register the platform cluster itse
 		--set config.bucket.bucket=kratix \
 		--wait --timeout 5m
 	kubectl --context $(PLATFORM_CTX) wait destination platform-cluster --for=condition=Ready --timeout=300s
+
+##@ Argo CD (read-only status/log engine, not a delivery mechanism - see
+##@ docs/superpowers/specs/2026-08-14-container-workload-logs-design.md)
+
+.PHONY: argo-install
+argo-install: ## Install Argo CD on the platform cluster (Helm chart: argo/argo-cd)
+	helm --kube-context $(PLATFORM_CTX) upgrade --install argocd argo-cd \
+		--repo $(ARGO_HELM_REPO) --version $(ARGO_CD_CHART_VERSION) \
+		--namespace $(ARGO_NAMESPACE) --create-namespace \
+		-f hack/argo/platform-values.yaml --wait --timeout 5m
 
 .PHONY: restart
 restart: down up ## Delete and recreate both clusters from scratch
