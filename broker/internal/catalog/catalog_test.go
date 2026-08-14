@@ -17,7 +17,8 @@ func databasePromise() *unstructured.Unstructured {
 		"metadata": map[string]interface{}{
 			"name": "database",
 			"labels": map[string]interface{}{
-				LabelVisible: "true",
+				LabelVisible:        "true",
+				LabelPromiseVersion: "v0.1.0",
 			},
 			"annotations": map[string]interface{}{
 				AnnotationDisplayName: "Postgres Database",
@@ -81,6 +82,9 @@ func TestParseEntry(t *testing.T) {
 	}
 	if entry.Group != "demo.kratix.io" || entry.Version != "v1alpha1" {
 		t.Errorf("Group/Version = %q/%q, want demo.kratix.io/v1alpha1", entry.Group, entry.Version)
+	}
+	if entry.PromiseVersion != "v0.1.0" {
+		t.Errorf("PromiseVersion = %q, want %q", entry.PromiseVersion, "v0.1.0")
 	}
 	if entry.Kind != "Database" || entry.Plural != "databases" {
 		t.Errorf("Kind/Plural = %q/%q, want Database/databases", entry.Kind, entry.Plural)

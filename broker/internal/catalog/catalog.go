@@ -36,6 +36,7 @@ var PromiseGVR = schema.GroupVersionResource{
 // restrictive for free text.
 const (
 	LabelVisible          = "marketplace.kratix.io/visible"
+	LabelPromiseVersion   = "kratix.io/promise-version"
 	AnnotationDisplayName = "marketplace.kratix.io/display-name"
 	AnnotationDescription = "marketplace.kratix.io/description"
 	AnnotationOwner       = "marketplace.kratix.io/owner"
@@ -57,13 +58,18 @@ type Entry struct {
 	DisplayName string                 `json:"displayName"`
 	Description string                 `json:"description,omitempty"`
 	Visible     bool                   `json:"visible"`
-	Group       string                 `json:"group"`
-	Version     string                 `json:"version"`
-	Kind        string                 `json:"kind"`
-	Plural      string                 `json:"plural"`
-	Scope       string                 `json:"scope"`
-	Schema      map[string]interface{} `json:"schema,omitempty"`
-	Status      map[string]interface{} `json:"status,omitempty"`
+	// PromiseVersion is this Promise's current kratix.io/promise-version
+	// label - a different axis from Version below (the CRD *schema*
+	// version, e.g. v1alpha1). See
+	// docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md.
+	PromiseVersion string                 `json:"promiseVersion,omitempty"`
+	Group          string                 `json:"group"`
+	Version        string                 `json:"version"`
+	Kind           string                 `json:"kind"`
+	Plural         string                 `json:"plural"`
+	Scope          string                 `json:"scope"`
+	Schema         map[string]interface{} `json:"schema,omitempty"`
+	Status         map[string]interface{} `json:"status,omitempty"`
 
 	// Operational evidence: see README.md, "Marketplace metadata
 	// convention". Owner/Lifecycle/Support/Policy are read straight off
@@ -146,18 +152,9 @@ func Get(ctx context.Context, client dynamic.Interface, name string) (*Entry, bo
 func parseEntry(obj *unstructured.Unstructured) (Entry, bool) {
 	name := obj.GetName()
 
-	group, _, _ := unstructured.NestedString(obj.Object, "spec", "api", "spec", "group")
-	kind, _, _ := unstructured.NestedString(obj.Object, "spec", "api", "spec", "names", "kind")
-	plural, _, _ := unstructured.NestedString(obj.Object, "spec", "api", "spec", "names", "plural")
-	scope, _, _ := unstructured.NestedString(obj.Object, "spec", "api", "spec", "scope")
-	versions, _, _ := unstructured.NestedSlice(obj.Object, "spec", "api", "spec", "versions")
-
-	if group == "" || kind == "" || plural == "" || len(versions) == 0 {
-		return Entry{}, false
-	}
-
-	version, schemaObj := pickVersion(versions)
-	if version == "" {
+	apiObj, _, _ := unstructured.NestedMap(obj.Object, "spec", "api")
+	group, kind, plural, scope, version, schemaObj, ok := parseCRD(apiObj)
+	if !ok {
 		return Entry{}, false
 	}
 
@@ -192,6 +189,7 @@ func parseEntry(obj *unstructured.Unstructured) (Entry, bool) {
 		DisplayName:     displayName,
 		Description:     obj.GetAnnotations()[AnnotationDescription],
 		Visible:         obj.GetLabels()[LabelVisible] == "true",
+		PromiseVersion:  obj.GetLabels()[LabelPromiseVersion],
 		Group:           group,
 		Version:         version,
 		Kind:            kind,
@@ -205,6 +203,28 @@ func parseEntry(obj *unstructured.Unstructured) (Entry, bool) {
 		Policy:          policy,
 		MissingEvidence: missing,
 	}, true
+}
+
+// parseCRD reads the CustomResourceDefinition manifest embedded at apiObj
+// (a Promise's spec.api, or - identical shape - a PromiseRevision's
+// spec.promiseSpec.api, since a revision snapshots a Promise's full spec
+// verbatim) and picks its storage version's schema, via pickVersion.
+func parseCRD(apiObj map[string]interface{}) (group, kind, plural, scope, crdVersion string, schemaObj map[string]interface{}, ok bool) {
+	group, _, _ = unstructured.NestedString(apiObj, "spec", "group")
+	kind, _, _ = unstructured.NestedString(apiObj, "spec", "names", "kind")
+	plural, _, _ = unstructured.NestedString(apiObj, "spec", "names", "plural")
+	scope, _, _ = unstructured.NestedString(apiObj, "spec", "scope")
+	versions, _, _ := unstructured.NestedSlice(apiObj, "spec", "versions")
+
+	if group == "" || kind == "" || plural == "" || len(versions) == 0 {
+		return "", "", "", "", "", nil, false
+	}
+
+	crdVersion, schemaObj = pickVersion(versions)
+	if crdVersion == "" {
+		return "", "", "", "", "", nil, false
+	}
+	return group, kind, plural, scope, crdVersion, schemaObj, true
 }
 
 // pickVersion prefers the storage version (there's exactly one per CRD
