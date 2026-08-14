@@ -87,6 +87,45 @@ func TestValidateAgainstSchema_PreserveUnknownFields(t *testing.T) {
 	}
 }
 
+// businessUnitSpecSchemaAdditionalProperties mirrors the resourceQuotas
+// field's shape in the real business-unit Promise (see
+// promises/business-unit/promise.yaml): a nested object schema with no
+// properties map, declaring additionalProperties instead - OpenAPI v3's
+// standard way of saying "this is a free-form map of string values".
+func businessUnitSpecSchemaAdditionalProperties() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"spec": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"resourceQuotas": map[string]interface{}{
+						"type": "object",
+						"additionalProperties": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestValidateAgainstSchema_AdditionalProperties(t *testing.T) {
+	schemaObj := businessUnitSpecSchemaAdditionalProperties()
+
+	problems := ValidateAgainstSchema(schemaObj, map[string]interface{}{
+		"resourceQuotas": map[string]interface{}{
+			"cpu":    "20",
+			"memory": "40Gi",
+			"pods":   "100",
+		},
+	})
+	if len(problems) != 0 {
+		t.Errorf("ValidateAgainstSchema with additionalProperties = %v, want no problems", problems)
+	}
+}
+
 func TestValidateAgainstSchema_NoSpecSchema(t *testing.T) {
 	problems := ValidateAgainstSchema(map[string]interface{}{}, map[string]interface{}{"anything": true})
 	if problems != nil {

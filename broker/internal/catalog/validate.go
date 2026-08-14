@@ -53,9 +53,18 @@ func validateObject(fieldSchema map[string]interface{}, value map[string]interfa
 	// A field present in the spec but not declared in this schema's
 	// properties won't fit the target revision - flag it, unless the
 	// schema explicitly opts into accepting undeclared fields (mirrors
-	// apiextensions' x-kubernetes-preserve-unknown-fields).
+	// apiextensions' x-kubernetes-preserve-unknown-fields), or declares
+	// additionalProperties (OpenAPI v3's standard way of declaring a
+	// free-form map - e.g. business-unit's resourceQuotas field). Per the
+	// structural-schema convention, additionalProperties can be a bool
+	// (true = allow anything) or a schema object every extra value must
+	// match; either way it means "don't flag unknown keys here" for this
+	// validator, which doesn't recurse into arbitrary additionalProperties
+	// schemas.
 	preserveUnknown, _, _ := unstructured.NestedBool(fieldSchema, "x-kubernetes-preserve-unknown-fields")
-	if !preserveUnknown {
+	additionalProps, additionalPropsFound, _ := unstructured.NestedFieldNoCopy(fieldSchema, "additionalProperties")
+	allowsAdditional := additionalPropsFound && additionalProps != false
+	if !preserveUnknown && !allowsAdditional {
 		for name := range value {
 			if _, declared := properties[name]; !declared {
 				problems = append(problems, fmt.Sprintf("unknown field %q for this version", path+"."+name))
