@@ -179,6 +179,27 @@ argo-install: ## Install Argo CD on the platform cluster (Helm chart: argo/argo-
 		--namespace $(ARGO_NAMESPACE) --create-namespace \
 		-f hack/argo/platform-values.yaml --wait --timeout 5m
 
+.PHONY: argo-register-worker
+argo-register-worker: argo-install ## Register kind-worker with Argo CD as a read-only external cluster
+	kubectl --context $(WORKER_CTX) apply -f hack/argo/worker-serviceaccount.yaml
+	@echo "Waiting for the argocd-manager ServiceAccount token to populate..."
+	@token=""; \
+	for i in $$(seq 1 30); do \
+		token=$$(kubectl --context $(WORKER_CTX) -n kube-system get secret argocd-manager-token -o jsonpath='{.data.token}' 2>/dev/null | base64 -d); \
+		[ -n "$$token" ] && break; \
+		sleep 1; \
+	done; \
+	if [ -z "$$token" ]; then echo "Timed out waiting for argocd-manager-token"; exit 1; fi; \
+	worker_server=$$(kind get kubeconfig --internal --name $(WORKER_CLUSTER) | yq '.clusters[0].cluster.server'); \
+	worker_ca=$$(kind get kubeconfig --internal --name $(WORKER_CLUSTER) | yq '.clusters[0].cluster.certificate-authority-data'); \
+	worker_config=$$(printf '{"bearerToken":"%s","tlsClientConfig":{"insecure":false,"caData":"%s"}}' "$$token" "$$worker_ca"); \
+	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) create secret generic $(ARGO_WORKER_CLUSTER_NAME)-cluster \
+		--from-literal=name=$(ARGO_WORKER_CLUSTER_NAME) \
+		--from-literal=server=$$worker_server \
+		--from-literal=config="$$worker_config" \
+		--dry-run=client -o yaml | kubectl --context $(PLATFORM_CTX) apply -f -
+	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) label secret $(ARGO_WORKER_CLUSTER_NAME)-cluster argocd.argoproj.io/secret-type=cluster --overwrite
+
 .PHONY: restart
 restart: down up ## Delete and recreate both clusters from scratch
 
