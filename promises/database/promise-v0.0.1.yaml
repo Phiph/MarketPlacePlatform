@@ -1,9 +1,15 @@
+# A snapshot of promise.yaml as it looked at v0.0.1, before the
+# highAvailability field was added at v0.2.0 (see promise.yaml itself).
+# `promise-demo` installs this first, then promise.yaml on top of it, so a
+# fresh `make up` gets a real, historical second PromiseRevision instead of
+# a synthesized one - the same mechanism a real Promise upgrade uses. See
+# docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md.
 apiVersion: platform.kratix.io/v1alpha1
 kind: Promise
 metadata:
   creationTimestamp: null
   labels:
-    kratix.io/promise-version: v0.2.0
+    kratix.io/promise-version: v0.0.1
     marketplace.kratix.io/visible: "true"
   annotations:
     marketplace.kratix.io/display-name: Postgres Database
@@ -42,9 +48,6 @@ spec:
                     - 10Gi
                     - 50Gi
                     description: Storage volume size for the database.
-                  highAvailability:
-                    type: boolean
-                    description: Run a standby replica for automatic failover. Added in v0.2.0.
                 required:
                 - size
                 type: object

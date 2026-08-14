@@ -281,8 +281,8 @@ promise-load: ## Load $(PROMISE_DIR)'s built pipeline images into the platform c
 	done
 
 .PHONY: promise-demo
-promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_DIR), then request its example resource
-	kubectl --context $(PLATFORM_CTX) apply -f $(PROMISE_DIR)/promise.yaml
+promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_DIR) at v0.0.1, then request its example resource
+	kubectl --context $(PLATFORM_CTX) apply -f $(PROMISE_DIR)/promise-v0.0.1.yaml
 	@echo "Waiting for the Promise's CRD to be established..."
 	@for i in $$(seq 1 60); do \
 		kubectl --context $(PLATFORM_CTX) get crd databases.demo.kratix.io >/dev/null 2>&1 && break; \
@@ -292,6 +292,10 @@ promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_D
 	@echo ""
 	@echo "Watch the request:  kubectl --context $(PLATFORM_CTX) get databases.demo.kratix.io example-database -w"
 	@echo "Watch the worker:   kubectl --context $(WORKER_CTX) get pods -w"
+	@echo ""
+	@echo "Still at v0.0.1 here deliberately - demo-setup installs v0.2.0 on"
+	@echo "top once team-payments exists, giving the demo a real second"
+	@echo "Promise revision to upgrade a request between."
 
 # Installs every Promise the broker demo needs (business-unit, team, project,
 # environment - database comes from promise-demo above) and seeds them with
@@ -304,8 +308,17 @@ promise-demo: promise-build promise-load ## Build, load, and install $(PROMISE_D
 # and environment's example-resource.yaml are applied directly since nothing
 # else provisions them. See README.md's "Marketplace broker API" section -
 # this target automates exactly that sequence.
+#
+# Also seeds a real, visible upgrade-available database once team-payments
+# exists: promise-demo installed database at v0.0.1 only, deliberately -
+# example-resource-team.yaml is submitted while that's still the only
+# revision, its binding is pinned to v0.0.1 (a ResourceBinding tracking the
+# literal "latest" resolves dynamically - see bindingapi.Version - so without
+# pinning it'd silently follow the v0.2.0 upgrade below instead of showing an
+# upgrade as available), then promise.yaml (v0.2.0) is installed on top,
+# giving Kratix a real second PromiseRevision to offer.
 .PHONY: demo-setup
-demo-setup: promise-demo ## Install every demo Promise, provision teams, and seed example project/environment requests
+demo-setup: promise-demo ## Install every demo Promise, provision teams, and seed example project/environment/database requests
 	@for dir in business-unit team project environment; do \
 		$(MAKE) --no-print-directory promise-build promise-load PROMISE_DIR=promises/$$dir; \
 		kubectl --context $(PLATFORM_CTX) apply -f promises/$$dir/promise.yaml; \
@@ -325,9 +338,24 @@ demo-setup: promise-demo ## Install every demo Promise, provision teams, and see
 	done
 	kubectl --context $(PLATFORM_CTX) apply -f promises/project/example-resource.yaml
 	kubectl --context $(PLATFORM_CTX) apply -f promises/environment/example-resource.yaml
+	@echo "Waiting for team-payments's namespace..."
+	@for i in $$(seq 1 60); do \
+		kubectl --context $(PLATFORM_CTX) get ns team-payments >/dev/null 2>&1 && break; \
+		sleep 2; \
+	done
+	kubectl --context $(PLATFORM_CTX) apply -f promises/database/example-resource-team.yaml
+	@echo "Waiting for its ResourceBinding..."
+	@for i in $$(seq 1 60); do \
+		kubectl --context $(PLATFORM_CTX) get resourcebindings -n team-payments -l kratix.io/resource-name=example-database -o jsonpath='{.items[0].metadata.name}' 2>/dev/null | grep -q . && break; \
+		sleep 2; \
+	done
+	@binding=$$(kubectl --context $(PLATFORM_CTX) get resourcebindings -n team-payments -l kratix.io/resource-name=example-database -o jsonpath='{.items[0].metadata.name}'); \
+	kubectl --context $(PLATFORM_CTX) patch resourcebinding "$$binding" -n team-payments --type=merge -p '{"spec":{"version":"v0.0.1"}}'
+	@echo "Upgrading database to v0.2.0 (adds highAvailability) - team-payments/example-database stays pinned to v0.0.1 above, so it shows as upgrade-available..."
+	kubectl --context $(PLATFORM_CTX) apply -f promises/database/promise.yaml
 	@echo ""
 	@echo "Example data ready to browse:"
-	@echo "  Database:    example-database (default namespace)"
+	@echo "  Database:    example-database (default namespace, and team-payments - the latter pinned to v0.0.1, v0.2.0 available)"
 	@echo "  Project:     checkout-service (team-checkout namespace)"
 	@echo "  Environment: dev, under checkout-service"
 	@echo "  Teams:       payments, checkout (business unit platform-org) - see broker/config/teams.yaml for API keys"
