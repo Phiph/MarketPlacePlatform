@@ -23,3 +23,12 @@ rules:
   - apiGroups: ["demo.kratix.io"]
     resources: ["*"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ResourceBinding is what a resource request's bound Promise version
+  # actually lives on (platform.kratix.io, not demo.kratix.io like every
+  # Promise's own CRD above) - teams need get/list to see their own
+  # requests' current version and patch to move them. See
+  # docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md,
+  # "RBAC."
+  - apiGroups: ["platform.kratix.io"]
+    resources: ["resourcebindings"]
+    verbs: ["get", "list", "watch", "patch"]
