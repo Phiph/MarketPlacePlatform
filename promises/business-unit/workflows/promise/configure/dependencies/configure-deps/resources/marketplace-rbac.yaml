@@ -26,9 +26,14 @@ rules:
   # ResourceBinding is what a resource request's bound Promise version
   # actually lives on (platform.kratix.io, not demo.kratix.io like every
   # Promise's own CRD above) - teams need get/list to see their own
-  # requests' current version and patch to move them. See
+  # requests' current version, and update to move them: bindingapi.SetVersion
+  # (broker/internal/bindingapi/binding.go) does a get-modify-write ending
+  # in a plain .Update() call (PUT), matching resourceapi.Update's existing
+  # convention - that needs the "update" RBAC verb, not "patch" ("patch"
+  # governs the PATCH HTTP verb/.Patch() client-go method, which nothing in
+  # this codebase calls on ResourceBinding). See
   # docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md,
   # "RBAC."
   - apiGroups: ["platform.kratix.io"]
     resources: ["resourcebindings"]
-    verbs: ["get", "list", "watch", "patch"]
+    verbs: ["get", "list", "watch", "update"]

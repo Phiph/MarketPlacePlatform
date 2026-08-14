@@ -130,12 +130,22 @@ func createConfigMap(ctx context.Context, client dynamic.Interface, namespace, n
 
 // TestRBACBoundary_ResourceBindings is TestRBACBoundary's counterpart for
 // platform.kratix.io/ResourceBinding - the object the promise
-// version-upgrade feature reads/patches (see
+// version-upgrade feature reads/updates (see
 // docs/superpowers/specs/2026-08-14-promise-version-upgrades-design.md).
 // Confirms the RBAC change in marketplace-rbac.yaml actually grants teams
-// get/list/patch on their own namespace's bindings, and nothing on
+// get/list/update on their own namespace's bindings, and nothing on
 // another team's - same boundary, same mechanism, different API group
 // than TestRBACBoundary already proves.
+//
+// Unlike TestRBACBoundary, this does not have the impersonated client
+// create its own fixture: teams are only ever granted get/list/watch/update
+// on ResourceBinding (see marketplace-rbac.yaml) - Kratix's own controller
+// is what creates one, automatically, the moment a resource request is
+// submitted. So the fixture here is seeded with an unimpersonated
+// (cluster-admin) client, standing in for Kratix's controller identity,
+// and the boundary under test is get/list/update, matching what
+// bindingapi.Get/SetVersion (broker/internal/bindingapi/binding.go)
+// actually do.
 func TestRBACBoundary_ResourceBindings(t *testing.T) {
 	kubeContext := os.Getenv("BROKER_KUBE_CONTEXT")
 	if kubeContext == "" {
@@ -147,6 +157,11 @@ func TestRBACBoundary_ResourceBindings(t *testing.T) {
 	).ClientConfig()
 	if err != nil {
 		t.Fatalf("loading kubeconfig (context %q): %v", kubeContext, err)
+	}
+
+	adminClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		t.Fatalf("building admin client: %v", err)
 	}
 
 	groups := k8sclient.NewGroupClients(config)
@@ -165,6 +180,15 @@ func TestRBACBoundary_ResourceBindings(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Seed one binding per namespace as admin - standing in for Kratix's
+	// own controller, which is the only identity ever granted "create" on
+	// this resource.
+	for _, ns := range []string{nsA, nsB} {
+		if err := seedResourceBindingAsAdmin(ctx, adminClient, ns, "rbac-boundary-test"); err != nil {
+			t.Fatalf("seeding ResourceBinding fixture in %q: %v", ns, err)
+		}
+	}
+
 	for _, tc := range []struct {
 		team   string
 		client dynamic.Interface
@@ -173,28 +197,46 @@ func TestRBACBoundary_ResourceBindings(t *testing.T) {
 		{teamA, clientA, nsA},
 		{teamB, clientB, nsB},
 	} {
+		// The shared GlobalTenantResource reconciles on its own schedule
+		// (see its resyncPeriod), so there's a window after a team's
+		// namespace first appears where even the owning team's own calls
+		// still 403 - poll rather than asserting instantly.
 		var lastErr error
 		err := wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 15*time.Second, true, func(ctx context.Context) (bool, error) {
-			lastErr = createResourceBinding(ctx, tc.client, tc.ns, "rbac-boundary-test")
+			_, lastErr = tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).List(ctx, metav1.ListOptions{})
 			return lastErr == nil, nil
 		})
 		if err != nil {
-			t.Fatalf("%s: create ResourceBinding in own namespace %q never succeeded: %v", tc.team, tc.ns, lastErr)
+			t.Fatalf("%s: list ResourceBindings in own namespace %q never succeeded: %v", tc.team, tc.ns, lastErr)
 		}
-		if _, err := tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).List(ctx, metav1.ListOptions{}); err != nil {
-			t.Fatalf("%s: list ResourceBindings in own namespace %q: %v", tc.team, tc.ns, err)
+
+		obj, err := tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).Get(ctx, "rbac-boundary-test", metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("%s: get own namespace %q's binding: %v", tc.team, tc.ns, err)
+		}
+		if err := unstructured.SetNestedField(obj.Object, "v0.2.0", "spec", "version"); err != nil {
+			t.Fatalf("%s: setting spec.version on fetched binding: %v", tc.team, err)
+		}
+		if _, err := tc.client.Resource(resourceBindingsResource).Namespace(tc.ns).Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+			t.Errorf("%s: update own namespace %q's binding: %v", tc.team, tc.ns, err)
 		}
 	}
 
 	if _, err := clientA.Resource(resourceBindingsResource).Namespace(nsB).List(ctx, metav1.ListOptions{}); !apierrors.IsForbidden(err) {
 		t.Errorf("team A listing team B's namespace %q: got err=%v, want Forbidden", nsB, err)
 	}
-	if err := createResourceBinding(ctx, clientA, nsB, "rbac-boundary-attack"); !apierrors.IsForbidden(err) {
-		t.Errorf("team A creating in team B's namespace %q: got err=%v, want Forbidden", nsB, err)
+	if _, err := clientA.Resource(resourceBindingsResource).Namespace(nsB).Get(ctx, "rbac-boundary-test", metav1.GetOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team A getting team B's binding in namespace %q: got err=%v, want Forbidden", nsB, err)
+	}
+	if _, err := clientB.Resource(resourceBindingsResource).Namespace(nsA).List(ctx, metav1.ListOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team B listing team A's namespace %q: got err=%v, want Forbidden", nsA, err)
+	}
+	if _, err := clientB.Resource(resourceBindingsResource).Namespace(nsA).Get(ctx, "rbac-boundary-test", metav1.GetOptions{}); !apierrors.IsForbidden(err) {
+		t.Errorf("team B getting team A's binding in namespace %q: got err=%v, want Forbidden", nsA, err)
 	}
 }
 
-func createResourceBinding(ctx context.Context, client dynamic.Interface, namespace, name string) error {
+func seedResourceBindingAsAdmin(ctx context.Context, client dynamic.Interface, namespace, name string) error {
 	obj := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "platform.kratix.io/v1alpha1",
 		"kind":       "ResourceBinding",
