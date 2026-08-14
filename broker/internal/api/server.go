@@ -386,10 +386,16 @@ func (s *Server) doGetRequestVersion(w http.ResponseWriter, r *http.Request, ent
 		return
 	}
 
-	if _, ok, err := resourceapi.Get(r.Context(), client, entry, namespace, reqName); err != nil {
+	_, ok, err := resourceapi.Get(r.Context(), client, entry, namespace, reqName)
+	switch {
+	case apierrors.IsForbidden(err):
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
-	} else if !ok {
+	}
+	if !ok {
 		writeError(w, http.StatusNotFound, "no such request: "+reqName)
 		return
 	}
