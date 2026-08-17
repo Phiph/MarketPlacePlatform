@@ -212,9 +212,10 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 	pf_pid=$$!; \
 	trap "kill $$pf_pid 2>/dev/null" EXIT; \
 	sleep 2; \
+	login_body=$$(printf '{"username":"admin","password":"%s"}' "$$admin_pw"); \
 	session=$$(curl -sk -X POST https://localhost:8080/api/v1/session \
 		-H 'Content-Type: application/json' \
-		-d "{\"username\":\"admin\",\"password\":\"$$admin_pw\"}" | yq -p json -r '.token'); \
+		-d "$$login_body" | yq -p json -r '.token'); \
 	if [ -z "$$session" ] || [ "$$session" = "null" ]; then echo "Failed to log into Argo CD"; exit 1; fi; \
 	yq '.businessUnits | to_entries | .[] | .value.teams | keys | .[]' broker/config/teams.yaml | while read -r team; do \
 		ns=team-$$team; \
@@ -222,6 +223,13 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 			echo "argocd-team-token already exists in $$ns, skipping $$team"; \
 			continue; \
 		fi; \
+		echo "Waiting for namespace $$ns..."; \
+		ns_found=""; \
+		for i in $$(seq 1 60); do \
+			kubectl --context $(PLATFORM_CTX) get ns "$$ns" >/dev/null 2>&1 && ns_found=1 && break; \
+			sleep 2; \
+		done; \
+		if [ -z "$$ns_found" ]; then echo "Namespace $$ns never appeared after 120s"; exit 1; fi; \
 		echo "Waiting for AppProject $$team..."; \
 		found=""; \
 		for i in $$(seq 1 60); do \
@@ -241,8 +249,12 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 			sleep 1; \
 		done; \
 		if [ -z "$$recorded" ]; then echo "Token for $$team never appeared in AppProject status after 30s"; exit 1; fi; \
-		kubectl --context $(PLATFORM_CTX) -n "$$ns" create secret generic argocd-team-token --from-literal=token="$$token"; \
-		echo "Stored argocd-team-token in $$ns"; \
+		if kubectl --context $(PLATFORM_CTX) -n "$$ns" create secret generic argocd-team-token --from-literal=token="$$token"; then \
+			echo "Stored argocd-team-token in $$ns"; \
+		else \
+			echo "Failed to store argocd-team-token in $$ns"; \
+			exit 1; \
+		fi; \
 	done
 
 .PHONY: argo-admin-password
