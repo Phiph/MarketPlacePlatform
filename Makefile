@@ -49,6 +49,10 @@ ARGO_HELM_REPO         := https://argoproj.github.io/argo-helm
 ARGO_CD_CHART_VERSION  ?= 10.3.3
 ARGO_NAMESPACE         := argocd
 ARGO_WORKER_CLUSTER_NAME := worker-1
+# Naming source of truth: promises/team's pipeline.py's ARGO_ROLE constant
+# must hold the identical string - see that file's comment for why this
+# can't be shared code across languages.
+ARGO_ROLE := viewer
 
 PROMISE_DIR ?= promises/database
 
@@ -199,6 +203,47 @@ argo-register-worker: argo-install ## Register kind-worker with Argo CD as a rea
 		--from-literal=config="$$worker_config" \
 		--dry-run=client -o yaml | kubectl --context $(PLATFORM_CTX) apply -f -
 	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) label secret $(ARGO_WORKER_CLUSTER_NAME)-cluster argocd.argoproj.io/secret-type=cluster --overwrite
+
+.PHONY: argo-provision-teams
+argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config/teams.yaml) and store it as a Secret in that team's namespace
+	@admin_pw=$$(kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d); \
+	if [ -z "$$admin_pw" ]; then echo "argocd-initial-admin-secret not found (already rotated? see make argo-admin-password)"; exit 1; fi; \
+	kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) port-forward svc/argocd-server 8080:443 >/tmp/argo-provision-teams-pf.log 2>&1 & \
+	pf_pid=$$!; \
+	trap "kill $$pf_pid 2>/dev/null" EXIT; \
+	sleep 2; \
+	session=$$(curl -sk -X POST https://localhost:8080/api/v1/session \
+		-H 'Content-Type: application/json' \
+		-d "{\"username\":\"admin\",\"password\":\"$$admin_pw\"}" | yq -p json -r '.token'); \
+	if [ -z "$$session" ] || [ "$$session" = "null" ]; then echo "Failed to log into Argo CD"; exit 1; fi; \
+	yq '.businessUnits | to_entries | .[] | .value.teams | keys | .[]' broker/config/teams.yaml | while read -r team; do \
+		ns=team-$$team; \
+		if kubectl --context $(PLATFORM_CTX) -n "$$ns" get secret argocd-team-token >/dev/null 2>&1; then \
+			echo "argocd-team-token already exists in $$ns, skipping $$team"; \
+			continue; \
+		fi; \
+		echo "Waiting for AppProject $$team..."; \
+		found=""; \
+		for i in $$(seq 1 60); do \
+			kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) get appproject "$$team" >/dev/null 2>&1 && found=1 && break; \
+			sleep 2; \
+		done; \
+		if [ -z "$$found" ]; then echo "AppProject $$team never appeared after 120s"; exit 1; fi; \
+		echo "Minting Argo CD token for team $$team..."; \
+		token=$$(curl -sk -X POST "https://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
+			-H "Authorization: Bearer $$session" | yq -p json -r '.token'); \
+		if [ -z "$$token" ] || [ "$$token" = "null" ]; then echo "Failed to mint a token for $$team"; exit 1; fi; \
+		echo "Waiting for the token to be recorded in AppProject status (argoproj/argo-cd#2718 - a Flux reconcile of the declarative AppProject before this would otherwise wipe an unrecorded token)..."; \
+		recorded=""; \
+		for i in $$(seq 1 30); do \
+			count=$$(kubectl --context $(PLATFORM_CTX) -n $(ARGO_NAMESPACE) get appproject "$$team" -o jsonpath="{.status.jwtTokensByRole.$(ARGO_ROLE).items}" 2>/dev/null | yq -p json 'length' 2>/dev/null); \
+			[ -n "$$count" ] && [ "$$count" != "0" ] && recorded=1 && break; \
+			sleep 1; \
+		done; \
+		if [ -z "$$recorded" ]; then echo "Token for $$team never appeared in AppProject status after 30s"; exit 1; fi; \
+		kubectl --context $(PLATFORM_CTX) -n "$$ns" create secret generic argocd-team-token --from-literal=token="$$token"; \
+		echo "Stored argocd-team-token in $$ns"; \
+	done
 
 .PHONY: argo-admin-password
 argo-admin-password: ## Print the Argo CD initial admin password
@@ -386,6 +431,7 @@ demo-setup: promise-demo ## Install every demo Promise, provision teams, and see
 		done; \
 	done
 	$(MAKE) --no-print-directory broker-provision-teams
+	$(MAKE) --no-print-directory argo-provision-teams
 	@echo "Waiting for team-checkout's namespace (the example project/environment live there)..."
 	@for i in $$(seq 1 60); do \
 		kubectl --context $(PLATFORM_CTX) get ns team-checkout >/dev/null 2>&1 && break; \
