@@ -16,11 +16,19 @@ owner `platform-team`, lifecycle `stable`, support `#platform-eng`, policy `inte
   dependency workflow here - Capsule and its CRDs are installed once by `business-unit`'s own
   dependency step, and this Promise assumes they're already present.
 - `workflows/resource/configure/team-configure` - a Python pipeline that runs per-request,
-  reading the request's name (the team) and `spec.businessUnit`, and writing **only** a
-  `Namespace` named `team-<name>`, labeled `capsule.clastix.io/tenant: <businessUnit>` (points
-  at the parent business unit's Tenant by name) and `marketplace.kratix.io/team: <name>` (read
-  by the shared `GlobalTenantResource` - see `promises/business-unit/README.md` - to bind this
-  namespace's RBAC to the right Group).
+  reading the request's name (the team) and `spec.businessUnit`, and writing two outputs:
+  - a `Namespace` named `team-<name>`, labeled `capsule.clastix.io/tenant: <businessUnit>` (points
+    at the parent business unit's Tenant by name) and `marketplace.kratix.io/team: <name>` (read
+    by the shared `GlobalTenantResource` - see `promises/business-unit/README.md` - to bind this
+    namespace's RBAC to the right Group).
+  - an Argo CD `AppProject`, named after the team, in the `argocd` namespace (Argo's own
+    control-plane namespace - an `AppProject` is namespace-scoped and can't live in the team's
+    own `Namespace` above), with a `viewer` role granting only `applications, get` and
+    `logs, get` (no sync/delete), and empty `namespaceResourceWhitelist`/
+    `clusterResourceWhitelist` as defense-in-depth. See
+    `docs/superpowers/specs/2026-08-14-container-workload-logs-design.md`'s "RBAC" section for
+    the full design, including how `make argo-provision-teams` mints a team-scoped API token
+    against this project.
 - `example-resource.yaml` - a sample `Team` request, named `payments`, referencing business
   unit `platform-org` - matches `broker/config/teams.yaml`.
 
