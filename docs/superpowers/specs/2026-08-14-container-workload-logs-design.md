@@ -122,13 +122,15 @@ application code:
      everything else in that namespace to that team. `kubectl`/API access to
      `Application` objects inherits the real boundary for free.
    - One Argo project-role token per team, scoped to that `AppProject`
-     (`get` + `logs` only - no `sync`/`delete`), minted by the broker at
-     team-provisioning time (`broker-provision-teams`) via one imperative
-     call to Argo's API, and stored as a Secret the broker can read later.
-     Token minting is stateful/non-idempotent, which is why this lives in
-     the broker's provisioning step rather than as a declarative pipeline
-     output - the `AppProject` itself is declarative (pipeline-owned); the
-     token is not.
+     (`get` + `logs` only - no `sync`/`delete`), minted at team-provisioning
+     time by `argo-provision-teams` - a Makefile target (`curl` against
+     Argo's own API, not broker/Go code) - and stored as a Secret the broker
+     can read later. Matches `broker-provision-teams`'s existing convention
+     of keeping team-provisioning plumbing as pure Makefile/kubectl/yq, no
+     Go code, rather than a reason to route this through the broker itself.
+     Token minting is stateful/non-idempotent, which is why this lives in a
+     provisioning step rather than as a declarative pipeline output - the
+     `AppProject` itself is declarative (pipeline-owned); the token is not.
    - The broker uses the *calling team's own* token for every Argo API call
      it makes on that team's behalf - never a shared, broker-wide credential.
      A bug in the broker's routing logic still can't leak another team's
@@ -142,7 +144,7 @@ application code:
 | Argo CD install | new `hack/argo/` + Makefile target | Helm install on `kind-platform`, values scoping its ClusterRole |
 | Worker cluster registration | Makefile target | Argo `Secret` (type `Kubernetes cluster`) for `kind-worker` |
 | Per-team `AppProject` | `promises/team` pipeline | New output alongside the existing `Namespace` |
-| Per-team Argo API token | Broker, `broker-provision-teams` | One imperative mint call + Secret storage |
+| Per-team Argo API token | Makefile, `argo-provision-teams` | One imperative mint call + Secret storage |
 | Worker namespace-per-team | `container-configure` pipeline | Replace hardcoded `"default"` with `resource.get_namespace()`; emit `Namespace` if missing |
 | Tracking label + `Application` | `container-configure` pipeline | `app.kubernetes.io/instance` label on `Deployment`/`Service`; one `Application` (manual sync) per request |
 | Argo API client | new `broker/internal/argoclient` | Resource tree + pod logs (SSE) over HTTP |
@@ -153,8 +155,8 @@ application code:
 
 1. Team created → `promises/team` pipeline emits platform `Namespace` (as
    today) + new `AppProject` → both Flux-delivered to `kind-platform`.
-2. `broker-provision-teams` mints that team's Argo project-role token,
-   stores it.
+2. `argo-provision-teams` mints that team's Argo project-role token, stores
+   it.
 3. Team requests a `Container` → resource lands in that team's platform
    namespace, as today.
 4. `container-configure` runs: writes worker-side `Namespace` (if needed),

@@ -260,7 +260,7 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 	pf_pid=$$!; \
 	trap "kill $$pf_pid 2>/dev/null" EXIT; \
 	sleep 2; \
-	session=$$(curl -sk -X POST https://localhost:8080/api/v1/session \
+	session=$$(curl -sk -X POST http://localhost:8080/api/v1/session \
 		-H 'Content-Type: application/json' \
 		-d "{\"username\":\"admin\",\"password\":\"$$admin_pw\"}" | yq -p json -r '.token'); \
 	if [ -z "$$session" ] || [ "$$session" = "null" ]; then echo "Failed to log into Argo CD"; exit 1; fi; \
@@ -278,7 +278,7 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 		done; \
 		if [ -z "$$found" ]; then echo "AppProject $$team never appeared after 120s"; exit 1; fi; \
 		echo "Minting Argo CD token for team $$team..."; \
-		token=$$(curl -sk -X POST "https://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
+		token=$$(curl -sk -X POST "http://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
 			-H "Authorization: Bearer $$session" | yq -p json -r '.token'); \
 		if [ -z "$$token" ] || [ "$$token" = "null" ]; then echo "Failed to mint a token for $$team"; exit 1; fi; \
 		echo "Waiting for the token to be recorded in AppProject status (argoproj/argo-cd#2718 - a Flux reconcile of the declarative AppProject before this would otherwise wipe an unrecorded token)..."; \
@@ -335,25 +335,30 @@ kubectl --context kind-platform -n argocd get appproject checkout -o jsonpath='{
 
 Expected: a non-empty JSON array with one entry (`iat`, and an `id` if the chart version assigns one).
 
-- [ ] **Step 4: Verify the boundary actually holds**
+- [ ] **Step 4: Sanity-check the tokens and RBAC config (full boundary verification is deferred)**
 
-This is the acceptance check for the whole plan - team A's token must not work against team B's project.
+The real acceptance check for this plan - team A's token failing to read team B's data - can't
+be meaningfully exercised yet. The `viewer` role only grants `applications, get` and
+`logs, get` (Task 1), not `projects, get`, so hitting `GET /api/v1/projects/<name>` doesn't
+prove isolation either way: even `checkout`'s *own* token would likely 403 there too, since it
+was never granted permission to read project objects at all. And there's no real `Application`
+object yet to exercise `applications, get`/`logs, get` against - that's a later, not-yet-built
+plan. Treat meaningful cross-team boundary verification as deferred until that plan lands,
+rather than trust a 200/403 split here that would very likely be a confusing false negative.
+
+For now, a lighter sanity check: confirm both teams' tokens are well-formed JWTs and that each
+`AppProject`'s role config is scoped the way Task 1 intended.
 
 ```bash
-checkout_token=$(kubectl --context kind-platform -n team-checkout get secret argocd-team-token -o jsonpath='{.data.token}' | base64 -d)
-kubectl --context kind-platform -n argocd port-forward svc/argocd-server 8080:443 &
-PF_PID=$!
-sleep 2
-echo "Own project (expect 200/success):"
-curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8080/api/v1/projects/checkout \
-  -H "Authorization: Bearer $checkout_token"
-echo "Someone else's project (expect 403):"
-curl -sk -o /dev/null -w '%{http_code}\n' https://localhost:8080/api/v1/projects/payments \
-  -H "Authorization: Bearer $checkout_token"
-kill $PF_PID
+kubectl --context kind-platform -n team-checkout get secret argocd-team-token -o jsonpath='{.data.token}' | base64 -d | cut -c1-20; echo
+kubectl --context kind-platform -n team-payments get secret argocd-team-token -o jsonpath='{.data.token}' | base64 -d | cut -c1-20; echo
+kubectl --context kind-platform -n argocd get appproject checkout -o yaml
+kubectl --context kind-platform -n argocd get appproject payments -o yaml
 ```
 
-Expected: `200` for `checkout`'s own project, `403` for `payments`.
+Expected: both tokens start with `eyJhbGciOiJ...` (a well-formed JWT), and each `AppProject`'s
+`spec.roles` shows only the `viewer` role, granting `applications, get` and `logs, get`, with
+empty `namespaceResourceWhitelist`/`clusterResourceWhitelist`.
 
 - [ ] **Step 5: Commit**
 

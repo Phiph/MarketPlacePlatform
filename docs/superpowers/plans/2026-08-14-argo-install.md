@@ -272,12 +272,12 @@ kubectl --context kind-platform -n argocd port-forward svc/argocd-server 8080:44
 PF_PID=$!
 sleep 2
 ADMIN_PW=$(kubectl --context kind-platform -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
-curl -sk -X POST https://localhost:8080/api/v1/session \
+curl -sk -X POST http://localhost:8080/api/v1/session \
   -H 'Content-Type: application/json' \
   -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PW\"}" | \
   python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])' > /tmp/argocd-token
 TOKEN=$(cat /tmp/argocd-token)
-curl -sk https://localhost:8080/api/v1/clusters -H "Authorization: Bearer $TOKEN" | \
+curl -sk http://localhost:8080/api/v1/clusters -H "Authorization: Bearer $TOKEN" | \
   python3 -c 'import sys,json; d=json.load(sys.stdin); [print(c["name"], c["info"]["connectionState"]["status"]) for c in d["items"]]'
 kill $PF_PID
 ```

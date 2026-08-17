@@ -213,11 +213,13 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 	trap "kill $$pf_pid 2>/dev/null" EXIT; \
 	sleep 2; \
 	login_body=$$(printf '{"username":"admin","password":"%s"}' "$$admin_pw"); \
-	session=$$(curl -sk -X POST https://localhost:8080/api/v1/session \
+	session=$$(curl -sk -X POST http://localhost:8080/api/v1/session \
 		-H 'Content-Type: application/json' \
 		-d "$$login_body" | yq -p json -r '.token'); \
 	if [ -z "$$session" ] || [ "$$session" = "null" ]; then echo "Failed to log into Argo CD"; exit 1; fi; \
-	yq '.businessUnits | to_entries | .[] | .value.teams | keys | .[]' broker/config/teams.yaml | while read -r team; do \
+	teams=$$(yq '.businessUnits | to_entries | .[] | .value.teams | keys | .[]' broker/config/teams.yaml); \
+	if [ -z "$$teams" ]; then echo "No teams found in broker/config/teams.yaml"; exit 1; fi; \
+	for team in $$teams; do \
 		ns=team-$$team; \
 		if kubectl --context $(PLATFORM_CTX) -n "$$ns" get secret argocd-team-token >/dev/null 2>&1; then \
 			echo "argocd-team-token already exists in $$ns, skipping $$team"; \
@@ -238,7 +240,7 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 		done; \
 		if [ -z "$$found" ]; then echo "AppProject $$team never appeared after 120s"; exit 1; fi; \
 		echo "Minting Argo CD token for team $$team..."; \
-		token=$$(curl -sk -X POST "https://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
+		token=$$(curl -sk -X POST "http://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
 			-H "Authorization: Bearer $$session" | yq -p json -r '.token'); \
 		if [ -z "$$token" ] || [ "$$token" = "null" ]; then echo "Failed to mint a token for $$team"; exit 1; fi; \
 		echo "Waiting for the token to be recorded in AppProject status (argoproj/argo-cd#2718 - a Flux reconcile of the declarative AppProject before this would otherwise wipe an unrecorded token)..."; \

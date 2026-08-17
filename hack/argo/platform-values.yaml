@@ -17,6 +17,15 @@ configs:
     # cert-manager-issued cert for argocd-server and none is needed for local
     # dev. `make argo-ui` (Task 4) reaches it via port-forward.
     server.insecure: true
+  rbac:
+    policy.default: ''
+    # Pinned explicitly rather than left to the chart's own default (which
+    # today happens to also be ''): the per-team RBAC boundary in
+    # promises/team's pipeline-generated AppProjects depends on this staying
+    # empty. An empty default means a token with no explicit project-role
+    # grant gets no access at all, rather than falling back to some
+    # server-wide role - if a future chart bump ever changes its default,
+    # this line is what keeps every team's isolation from silently breaking.
   cm:
     # Lets an Application object live inside a team's own namespace
     # (team-<name>) instead of only inside argocd's own namespace, so the

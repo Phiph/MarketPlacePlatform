@@ -28,7 +28,9 @@ owner `platform-team`, lifecycle `stable`, support `#platform-eng`, policy `inte
     `clusterResourceWhitelist` as defense-in-depth. See
     `docs/superpowers/specs/2026-08-14-container-workload-logs-design.md`'s "RBAC" section for
     the full design, including how `make argo-provision-teams` mints a team-scoped API token
-    against this project.
+    against this project. Writing this output means this Promise now also assumes Argo CD's
+    CRDs are already installed on the platform cluster (`make argo-install`) - the same kind
+    of undeclared-here dependency as the Capsule one above, just on Argo CD instead.
 - `example-resource.yaml` - a sample `Team` request, named `payments`, referencing business
   unit `platform-org` - matches `broker/config/teams.yaml`.
 
