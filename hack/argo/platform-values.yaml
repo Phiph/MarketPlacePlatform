@@ -17,3 +17,16 @@ configs:
     # cert-manager-issued cert for argocd-server and none is needed for local
     # dev. `make argo-ui` (Task 4) reaches it via port-forward.
     server.insecure: true
+  cm:
+    # Lets an Application object live inside a team's own namespace
+    # (team-<name>) instead of only inside argocd's own namespace, so the
+    # same Kubernetes RBAC that already governs everything else in that
+    # namespace (promises/business-unit's team-rbac.yaml GlobalTenantResource)
+    # also governs who can read that team's Application objects directly via
+    # kubectl/the K8s API. Wildcarded once here; each AppProject's own
+    # sourceNamespaces field (see promises/team's pipeline) is what actually
+    # restricts a given project to its own one namespace - this setting only
+    # turns the feature on server-wide. See
+    # docs/superpowers/specs/2026-08-14-container-workload-logs-design.md,
+    # "RBAC".
+    application.namespaces: "team-*"
