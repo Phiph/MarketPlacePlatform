@@ -40,6 +40,7 @@ export function ServiceDetailPage() {
   const { name = '' } = useParams()
   const navigate = useNavigate()
   const { session } = useAuth()
+  const namePlaceholder = `my-${name}`
 
   const [entry, setEntry] = useState<CatalogEntry | null>(null)
   const [entryError, setEntryError] = useState<string | null>(null)
@@ -130,7 +131,7 @@ export function ServiceDetailPage() {
     if (!session) return
 
     if (!NAME_PATTERN.test(requestName)) {
-      toast.error('Name must be lowercase alphanumeric with dashes, e.g. "my-database"')
+      toast.error(`Name must be lowercase alphanumeric with dashes, e.g. "${namePlaceholder}"`)
       return
     }
 
@@ -289,7 +290,7 @@ export function ServiceDetailPage() {
                   <Label htmlFor="request-name">Request name</Label>
                   <Input
                     id="request-name"
-                    placeholder="my-database"
+                    placeholder={namePlaceholder}
                     value={requestName}
                     onChange={(e) => setRequestName(e.target.value)}
                     required
