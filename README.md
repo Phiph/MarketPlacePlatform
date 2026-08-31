@@ -327,6 +327,11 @@ No live cluster? `make ui-mock` runs a dependency-free mock of the broker
 (same routes, same auth, an in-memory store) so the UI can be developed and
 demoed on its own. See [ui/README.md](ui/README.md) for details.
 
+For a walkthrough of the end-to-end flow a team follows in the UI to request
+a service - sign in, browse, target a namespace or a project/environment,
+fill the schema-generated form, track status - see
+[docs/requesting-a-service.md](docs/requesting-a-service.md).
+
 ## Other targets
 
 ```bash
