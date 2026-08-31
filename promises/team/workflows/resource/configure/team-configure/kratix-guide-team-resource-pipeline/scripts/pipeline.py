@@ -13,6 +13,56 @@ def namespace_name(team: str) -> str:
 # team-rbac.yaml) to derive this namespace's owning team's Kubernetes Group.
 LABEL_TEAM = "marketplace.kratix.io/team"
 
+# Where Argo CD itself runs - AppProject is namespace-scoped and must live
+# in Argo's own control-plane namespace, unlike the Namespace this pipeline
+# also writes (which lives wherever the team's own workloads do). See
+# docs/superpowers/specs/2026-08-14-container-workload-logs-design.md,
+# "RBAC".
+#
+# Naming source of truth: the Makefile's ARGO_WORKER_CLUSTER_NAME and
+# ARGO_ROLE variables (argo-provision-teams target) must compute/hold the
+# identical strings - the two can't share code across languages, so both
+# sides carry a comment pointing at the other, same convention as
+# namespace_name()'s cross-reference to tenant.go's Namespace() below.
+ARGO_NAMESPACE = "argocd"
+ARGO_WORKER_CLUSTER_NAME = "worker-1"
+ARGO_ROLE = "viewer"
+
+
+def build_app_project(team: str) -> dict:
+    ns = namespace_name(team)
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "AppProject",
+        "metadata": {"name": team, "namespace": ARGO_NAMESPACE},
+        "spec": {
+            # Wildcarded rather than pinned to this repo's URL: which
+            # source(s) an Application in this project may reference is a
+            # per-Application concern (see the next plan), not something
+            # this team-scoping layer needs to constrain.
+            "sourceRepos": ["*"],
+            "destinations": [{"name": ARGO_WORKER_CLUSTER_NAME, "namespace": ns}],
+            "sourceNamespaces": [ns],
+            # Argo never applies anything in this design (Flux is the sole
+            # applier - see the design doc's "Architecture"). Empty
+            # whitelists are a second, independent guarantee of that: even
+            # a misconfigured Application in this project has nothing it's
+            # allowed to sync.
+            "namespaceResourceWhitelist": [],
+            "clusterResourceWhitelist": [],
+            "roles": [
+                {
+                    "name": ARGO_ROLE,
+                    "description": f"Read-only ({team}): application status and pod logs only, no sync/delete.",
+                    "policies": [
+                        f"p, proj:{team}:{ARGO_ROLE}, applications, get, {team}/*, allow",
+                        f"p, proj:{team}:{ARGO_ROLE}, logs, get, {team}/*, allow",
+                    ],
+                }
+            ],
+        },
+    }
+
 
 def main():
     sdk = ks.KratixSDK()
@@ -44,9 +94,13 @@ def main():
     }
     sdk.write_output("namespace.yaml", yaml.safe_dump(namespace).encode("utf-8"))
 
+    app_project = build_app_project(team)
+    sdk.write_output("app-project.yaml", yaml.safe_dump(app_project).encode("utf-8"))
+
     status = ks.Status()
     status.set("namespace", ns)
     status.set("businessUnit", business_unit)
+    status.set("argoProject", team)
     sdk.write_status(status)
 
 

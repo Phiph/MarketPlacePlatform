@@ -3,7 +3,7 @@ kind: Promise
 metadata:
   creationTimestamp: null
   labels:
-    kratix.io/promise-version: v0.1.0
+    kratix.io/promise-version: v0.2.0
     marketplace.kratix.io/visible: "false"
   annotations:
     marketplace.kratix.io/display-name: Team
@@ -75,7 +75,7 @@ spec:
           name: team-configure
         spec:
           containers:
-          - image: kratix-guide/team-resource-pipeline:v0.1.0
+          - image: kratix-guide/team-resource-pipeline:v0.2.0
             name: kratix-guide-team-resource-pipeline
 status:
   workflows: 0

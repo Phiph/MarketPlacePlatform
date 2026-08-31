@@ -165,6 +165,21 @@ RBAC mechanism above - an environment's namespace carries the exact same
 `promises/environment/README.md` for the one place this layer *does* need broker-side care
 (composing `spec.team`/`spec.businessUnit` itself rather than trusting the request body).
 
+That same per-team boundary extends to Argo CD, ahead of a future per-request logs endpoint:
+`promises/team`'s pipeline (`promises/team/README.md`) writes a read-only Argo CD `AppProject`
+per team, alongside the `Namespace` it already writes, with a `viewer` role scoped to
+`applications, get` and `logs, get` only - no `sync`/`delete` - and empty
+`namespaceResourceWhitelist`/`clusterResourceWhitelist` as defense-in-depth, since Argo never
+applies anything in this design. `demo-setup` (and so `make up`) runs a new `argo-provision-teams`
+target right after `broker-provision-teams` to mint one Argo CD API token per team, scoped to
+that team's own `AppProject`/`viewer` role, and stores it as a Secret (`argocd-team-token`, key
+`token`) in the team's own namespace (`team-<name>`) - never a single shared credential, so a
+broker routing bug can't leak another team's status/logs, the same reasoning that keeps the
+Kubernetes-API boundary above per-team rather than broker-enforced. See
+`docs/superpowers/specs/2026-08-14-container-workload-logs-design.md`'s "RBAC" section for the
+full design, including why the `AppProject` lives in Argo's own `argocd` namespace rather than
+the team's own.
+
 Auth (API-key -> team) is still a **static demo-only** mapping
 (`broker/config/teams.yaml`; ships with `payments` / `demo-key-payments`
 and `checkout` / `demo-key-checkout`) - there's no real authn (no OIDC/
@@ -328,6 +343,8 @@ make logs-flux-worker    # tail Flux on the worker cluster
 make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination)
 make k9s-platform        # k9s on the platform cluster
 make k9s-worker          # k9s on the worker cluster
+make argo-ui              # port-forward the Argo CD UI to http://localhost:8080
+make argo-admin-password  # print the Argo CD initial admin password
 make restart             # delete and recreate both clusters from scratch
 make down                # delete the clusters, keep the local registry
 make destroy             # delete the clusters and the local registry

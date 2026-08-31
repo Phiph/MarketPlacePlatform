@@ -1,0 +1,41 @@
+# Values for `helm install argocd argo-cd` on the platform cluster.
+# Argo CD here is a read-only status/log engine behind the broker, not a
+# second GitOps delivery mechanism - see
+# docs/superpowers/specs/2026-08-14-container-workload-logs-design.md.
+# Flux remains the only thing that applies/prunes workload resources; every
+# Application this platform creates uses manual sync (no automated block).
+
+# No SSO/Dex - per-team access is handled with local Argo accounts in a
+# later plan, not an identity provider.
+dex:
+  enabled: false
+
+configs:
+  params:
+    # Plain HTTP inside the cluster - matches this repo's existing "insecure:
+    # true" pattern for MinIO (hack/kratix/platform-values.yaml); there's no
+    # cert-manager-issued cert for argocd-server and none is needed for local
+    # dev. `make argo-ui` (Task 4) reaches it via port-forward.
+    server.insecure: true
+  rbac:
+    policy.default: ''
+    # Pinned explicitly rather than left to the chart's own default (which
+    # today happens to also be ''): the per-team RBAC boundary in
+    # promises/team's pipeline-generated AppProjects depends on this staying
+    # empty. An empty default means a token with no explicit project-role
+    # grant gets no access at all, rather than falling back to some
+    # server-wide role - if a future chart bump ever changes its default,
+    # this line is what keeps every team's isolation from silently breaking.
+  cm:
+    # Lets an Application object live inside a team's own namespace
+    # (team-<name>) instead of only inside argocd's own namespace, so the
+    # same Kubernetes RBAC that already governs everything else in that
+    # namespace (promises/business-unit's team-rbac.yaml GlobalTenantResource)
+    # also governs who can read that team's Application objects directly via
+    # kubectl/the K8s API. Wildcarded once here; each AppProject's own
+    # sourceNamespaces field (see promises/team's pipeline) is what actually
+    # restricts a given project to its own one namespace - this setting only
+    # turns the feature on server-wide. See
+    # docs/superpowers/specs/2026-08-14-container-workload-logs-design.md,
+    # "RBAC".
+    application.namespaces: "team-*"
