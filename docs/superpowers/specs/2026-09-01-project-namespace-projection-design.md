@@ -33,6 +33,17 @@ each workload pipeline (see "Approach" below). If the Argo CD logs work
 resumes, it should build on the namespace this design produces rather than
 re-deriving its own.
 
+That prior design's infra scaffolding is already partially committed and
+unaffected by this change (nothing in it currently consumes a workload's
+namespace - `container-configure` writes no `Application` manifest yet,
+and no `broker/internal/argoclient` exists). But one already-committed
+piece bakes in the stale convention: `promises/team`'s pipeline
+(`pipeline.py:44`) emits an `AppProject` with
+`destinations: [{name: "worker-1", namespace: "team-{team}"}]`. That
+won't cover the project-environment namespace this design produces -
+whoever resumes the Argo work will need to update that `AppProject`'s
+`destinations`/`sourceNamespaces` accordingly (see "Open follow-ups").
+
 ## Goals
 
 - A `Database` or `Container` request's worker-side workload lands in a
@@ -183,3 +194,8 @@ configuration, or `promises/team`/`promises/business-unit`.
   (`2026-08-14-container-workload-logs-design.md`): its "Worker
   namespaces" section should be revised to reuse this design's
   project-environment namespace instead of re-deriving a team-level one.
+  Concretely, that means updating `promises/team`'s already-committed
+  `AppProject` (`pipeline.py:44`, `destinations`/`sourceNamespaces`
+  currently pinned to `team-{team}`) to scope against the
+  project-environment namespace(s) a team's `Application`s actually need,
+  once `container-configure` starts emitting `Application` manifests.
