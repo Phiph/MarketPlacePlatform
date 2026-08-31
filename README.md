@@ -3,16 +3,35 @@
 A demo platform showing platform engineers how to build their own enterprise
 internal developer platform, built on [Kratix](https://kratix.io).
 
+**TL;DR:** install [Docker](https://www.docker.com/products/docker-desktop),
+clone this repo, then:
+
+```bash
+make up   # first run: ~10-20 minutes, mostly image pulls and Helm waits
+make dev  # once up finishes: broker + UI at http://localhost:5173
+```
+
+Works on macOS, Linux, and Windows-via-WSL2. Read on for details, or jump to
+[Windows (WSL2)](#windows-wsl2) if that's you.
+
 ## Running Kratix locally
 
-Prerequisites: [Docker](https://www.docker.com/products/docker-desktop) and
-[Homebrew](https://brew.sh). Everything else (`kind`, `kubectl`, `helm`, `yq`,
-`k9s`, the `kratix` CLI) is installed/fetched automatically - nothing is
-vendored into this repo.
+Prerequisites: [Docker](https://www.docker.com/products/docker-desktop), and
+on macOS, [Homebrew](https://brew.sh). Everything else (`kind`, `kubectl`,
+`helm`, `yq`, `k9s`, `flux`, the `kratix` CLI) is installed/fetched
+automatically - nothing is vendored into this repo. `make up` also runs a
+`make doctor` preflight first, checking Docker's resources, disk space, and
+that the local registry port is free, so a misconfigured machine fails in
+seconds with a clear message instead of partway through the run.
 
 ```bash
 make up
 ```
+
+First run takes roughly **10-20 minutes** - mostly Docker image pulls and
+Helm install waits across two clusters - and prints a `[step/10]` line before
+each stage so you can see where it is. Re-running `make up` afterward is fast
+since every step is idempotent and skips what already exists.
 
 This creates two local [kind](https://kind.sigs.k8s.io) clusters and the
 supporting dev tooling:
@@ -32,15 +51,36 @@ has to explicitly select `environment: platform` to land on the platform cluster
   cluster without pushing anywhere
 - **metrics-server** on both clusters, for `make top`
 
-The first run takes a few minutes while images pull and Flux reconciles.
-`make up` is idempotent - re-running it skips clusters that already exist.
-
 Once `make up` finishes, point `kubectl` at either cluster:
 
 ```bash
 kubectl config use-context kind-platform
 kubectl config use-context kind-worker
 ```
+
+Run `make verify` any time to confirm the demo is actually healthy - it
+checks both cluster contexts respond, Kratix's pods are `Running`, both
+Destinations are `Ready`, and the broker can build and serve a real catalog.
+
+### Windows (WSL2)
+
+This Makefile needs bash, and `kind`'s own Windows support runs through
+[WSL2](https://learn.microsoft.com/windows/wsl/install) - there's no native
+cmd.exe/PowerShell path. To run this on Windows:
+
+1. Install WSL2 and a Linux distro (Ubuntu is the default and best-tested):
+   `wsl --install`.
+2. Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
+   on Windows and enable **Settings > Resources > WSL Integration** for your
+   distro - Docker Desktop's daemon is shared into WSL2, so you don't install
+   Docker a second time inside the distro itself.
+3. Open a shell in your WSL2 distro (`wsl` from a terminal, or the distro's
+   Start Menu entry) and clone/work from there - not from a Windows path
+   (`/mnt/c/...`), which is slow and can trip up file-watching tools.
+4. From that WSL2 shell, everything below is identical to the Linux
+   instructions - `make deps`/`make up` detect the Linux userland (WSL2
+   reports itself as `Linux`, same as a native install) and install
+   prerequisites the same way.
 
 ## Platform infra (Flux/GitOps)
 
@@ -335,6 +375,8 @@ fill the schema-generated form, track status - see
 ## Other targets
 
 ```bash
+make doctor              # preflight check - Docker resources, disk space, port conflicts
+make verify              # confirm `make up` came up healthy (contexts, pods, Destinations, broker catalog)
 make dev                 # run the broker + UI dev server together
 make broker-run          # run the marketplace broker API against kind-platform
 make broker-build        # build the broker binary (bin/broker)
@@ -358,7 +400,9 @@ make help                # list all targets, grouped
 
 ## How this works
 
-Nothing is cloned or vendored - `make up` runs, in order:
+Nothing is cloned or vendored - `make up` runs `doctor` (the preflight checks
+described above), then `deps` (installs whatever's missing for your OS), then
+`registry-start`, then, in order:
 
 1. `clusters` - two kind clusters (`hack/kind/{platform,worker}-config.yaml`: upstream
    [Kratix](https://github.com/syntasso/kratix)'s port-mappings plus a
