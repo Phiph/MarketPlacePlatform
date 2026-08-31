@@ -241,7 +241,7 @@ argo-provision-teams: ## Mint a scoped Argo CD API token per team (broker/config
 		if [ -z "$$found" ]; then echo "AppProject $$team never appeared after 120s"; exit 1; fi; \
 		echo "Minting Argo CD token for team $$team..."; \
 		token=$$(curl -sk -X POST "http://localhost:8080/api/v1/projects/$$team/roles/$(ARGO_ROLE)/token" \
-			-H "Authorization: Bearer $$session" | yq -p json -r '.token'); \
+			-H "Authorization: Bearer $$session" -H "Content-Type: application/json" | yq -p json -r '.token'); \
 		if [ -z "$$token" ] || [ "$$token" = "null" ]; then echo "Failed to mint a token for $$team"; exit 1; fi; \
 		echo "Waiting for the token to be recorded in AppProject status (argoproj/argo-cd#2718 - a Flux reconcile of the declarative AppProject before this would otherwise wipe an unrecorded token)..."; \
 		recorded=""; \
