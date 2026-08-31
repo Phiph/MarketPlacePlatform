@@ -199,3 +199,18 @@ configuration, or `promises/team`/`promises/business-unit`.
   currently pinned to `team-{team}`) to scope against the
   project-environment namespace(s) a team's `Application`s actually need,
   once `container-configure` starts emitting `Application` manifests.
+- **A shared platform conventions package for pipelines.** Naming
+  conventions like namespace strings and their labels are currently
+  duplicated per-language with no shared enforcement: the Go broker has
+  one canonical source (`broker/internal/tenant/tenant.go`), but every
+  Python pipeline re-implements its own copy, linked only by comments
+  pointing at each other. That's exactly how `promises/team`'s `AppProject`
+  above drifted out of sync with the namespace convention it depends on.
+  A small shared Python package (e.g. `team_namespace()`,
+  `project_environment_namespace()`, the `marketplace.kratix.io/*` label
+  constants) installed into every pipeline's Docker image would collapse
+  that duplication on the Python side; Go/Python parity would still rely
+  on paired comments (or generated conventions) absent real codegen
+  tooling. Deliberately out of scope here - packaging and versioning a
+  shared library across five pipeline images is its own design, not a
+  natural extension of this fix.
