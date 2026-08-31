@@ -24,6 +24,26 @@ WORKER_CLUSTER    := worker
 PLATFORM_CTX      := kind-$(PLATFORM_CLUSTER)
 WORKER_CTX        := kind-$(WORKER_CLUSTER)
 
+# Darwin (macOS) or Linux - including WSL2, which reports "Linux" here same as
+# native. Anything else (bare Windows cmd/PowerShell) can't run this Makefile
+# at all since it needs bash - see `deps`'s catch-all case and README.md's
+# "Windows (WSL2)" section.
+UNAME_S := $(shell uname -s)
+
+# Only used on Linux/WSL2 (see `deps-linux`) for the tools with no apt package
+# of their own. "latest" resolves via GitHub's /releases/latest redirect (no
+# API calls, so no unauthenticated rate-limit surprises) - override any of
+# these to pin a specific tag instead, same pattern as $(KRATIX_CLI_VERSION)/
+# $(FLUX_VERSION) below.
+KIND_LINUX_VERSION ?= latest
+YQ_LINUX_VERSION    ?= latest
+K9S_LINUX_VERSION   ?= latest
+
+# Empty when already root or when sudo isn't present (e.g. some containers) -
+# in that case the install commands below run unprefixed and simply fail if
+# they actually needed root, same as any other missing-prereq failure here.
+SUDO := $(shell [ "$$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && echo sudo)
+
 KIND_NODE_IMAGE      ?= kindest/node:v1.33.1
 CERT_MANAGER_VERSION ?= v1.15.0
 KRATIX_HELM_REPO     := https://syntasso.github.io/helm-charts
@@ -66,37 +86,138 @@ INFRA_TAG      := $(shell date +%Y%m%d%H%M%S)
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} /^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)}' $(MAKEFILE_LIST)
 
+##@ Preflight
+
+.PHONY: doctor
+doctor: ## Check the local machine is ready for `make up` (Docker resources, disk space, local registry port) - runs automatically as the first step of `up`
+	@echo "Running preflight checks..."
+	@command -v docker >/dev/null || { echo "FAIL: Docker is required: https://www.docker.com/products/docker-desktop"; exit 1; }
+	@docker info >/dev/null 2>&1 || { echo "FAIL: Docker is installed but the daemon isn't running"; exit 1; }
+	@ncpu=$$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0); \
+	mem_gb=$$(( $$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0) / 1073741824 )); \
+	[ "$$ncpu" -ge 4 ] 2>/dev/null || echo "WARN: Docker only sees $${ncpu} CPU(s) - two kind clusters plus Kratix/Flux/Argo CD/MinIO/Capsule want 4+. If things run slow or pods get evicted, raise this in Docker Desktop's Settings > Resources."; \
+	[ "$$mem_gb" -ge 8 ] 2>/dev/null || echo "WARN: Docker only sees ~$${mem_gb}GB RAM - 8GB+ recommended for this stack. If pods start crash-looping or getting OOMKilled, raise this in Docker Desktop's Settings > Resources."
+	@free_gb=$$(( $$(df -Pk . | awk 'NR==2 {print $$4}') / 1048576 )); \
+	[ "$$free_gb" -ge 20 ] 2>/dev/null || echo "WARN: only ~$${free_gb}GB free disk space here - kind node images plus built pipeline images can use 15-20GB."
+	@if (echo > /dev/tcp/127.0.0.1/$(REGISTRY_PORT)) 2>/dev/null; then \
+		if [ "$$(docker inspect -f '{{.State.Running}}' $(REGISTRY_NAME) 2>/dev/null)" != "true" ]; then \
+			echo "FAIL: port $(REGISTRY_PORT) is already in use by something other than $(REGISTRY_NAME) - free it, or override with 'make up REGISTRY_PORT=<port>'"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "Preflight checks passed."
+
 ##@ Cluster lifecycle
 
 .PHONY: deps
-deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s, go) and fetch the kratix CLI
+deps: ## Check/install local prerequisites (docker, kind, kubectl, helm, yq, k9s, go, flux) and fetch the kratix CLI - macOS via Homebrew, Linux/WSL2 via apt + upstream installers
 	@command -v docker >/dev/null || { echo "Docker is required: https://www.docker.com/products/docker-desktop"; exit 1; }
 	@docker info >/dev/null 2>&1 || { echo "Docker is installed but the daemon isn't running"; exit 1; }
-	@command -v kind    >/dev/null || brew install kind
-	@command -v kubectl >/dev/null || brew install kubectl
-	@command -v helm    >/dev/null || brew install helm
-	@command -v yq      >/dev/null || brew install yq
-	@command -v k9s     >/dev/null || brew install k9s
-	@command -v go      >/dev/null || brew install go
-	@command -v flux    >/dev/null || brew install fluxcd/tap/flux
+	@case "$(UNAME_S)" in \
+		Darwin) \
+			command -v kind    >/dev/null || brew install kind; \
+			command -v kubectl >/dev/null || brew install kubectl; \
+			command -v helm    >/dev/null || brew install helm; \
+			command -v yq      >/dev/null || brew install yq; \
+			command -v k9s     >/dev/null || brew install k9s; \
+			command -v go      >/dev/null || brew install go; \
+			command -v flux    >/dev/null || brew install fluxcd/tap/flux; \
+			;; \
+		Linux) \
+			$(MAKE) --no-print-directory deps-linux; \
+			;; \
+		*) \
+			echo "Unsupported OS '$(UNAME_S)'."; \
+			echo "On Windows: install WSL2 plus a Linux distro, enable Docker Desktop's WSL2 integration for it, then run 'make up' from inside that WSL2 shell - see README.md's \"Windows (WSL2)\" section."; \
+			exit 1; \
+			;; \
+	esac
 	@$(MAKE) --no-print-directory $(KRATIX_CLI)
 
+.PHONY: deps-linux
+deps-linux: ## (internal, called by `deps` on Linux/WSL2) install kind/kubectl/helm/yq/k9s/flux/go via apt (go only) plus each tool's official upstream installer
+	@command -v go >/dev/null || { \
+		if command -v apt-get >/dev/null; then \
+			echo "Installing go via apt..."; \
+			$(SUDO) apt-get update -y && $(SUDO) apt-get install -y golang-go; \
+		else \
+			echo "go not found and no apt-get here - install manually: https://go.dev/dl/"; \
+		fi; \
+	}
+	@command -v kubectl >/dev/null || { \
+		echo "Installing kubectl (official upstream binary)..."; \
+		arch=$$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/'); \
+		ver=$$(curl -fsSL https://dl.k8s.io/release/stable.txt); \
+		curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/$$ver/bin/linux/$$arch/kubectl"; \
+		chmod +x /tmp/kubectl && $(SUDO) mv /tmp/kubectl /usr/local/bin/kubectl; \
+	}
+	@command -v helm >/dev/null || { \
+		echo "Installing helm (official install script)..."; \
+		curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | $(SUDO) bash; \
+	}
+	@command -v kind >/dev/null || { \
+		echo "Installing kind ($(KIND_LINUX_VERSION))..."; \
+		arch=$$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/'); \
+		tag="$(KIND_LINUX_VERSION)"; \
+		[ "$$tag" = "latest" ] && tag=$$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/kubernetes-sigs/kind/releases/latest | sed 's#.*/tag/##'); \
+		curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/$$tag/kind-linux-$$arch"; \
+		chmod +x /tmp/kind && $(SUDO) mv /tmp/kind /usr/local/bin/kind; \
+	}
+	@command -v yq >/dev/null || { \
+		echo "Installing yq ($(YQ_LINUX_VERSION))..."; \
+		arch=$$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/'); \
+		tag="$(YQ_LINUX_VERSION)"; \
+		[ "$$tag" = "latest" ] && tag=$$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/mikefarah/yq/releases/latest | sed 's#.*/tag/##'); \
+		curl -fsSLo /tmp/yq "https://github.com/mikefarah/yq/releases/download/$$tag/yq_linux_$$arch"; \
+		chmod +x /tmp/yq && $(SUDO) mv /tmp/yq /usr/local/bin/yq; \
+	}
+	@command -v k9s >/dev/null || { \
+		echo "Installing k9s ($(K9S_LINUX_VERSION))..."; \
+		arch=$$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/'); \
+		tag="$(K9S_LINUX_VERSION)"; \
+		[ "$$tag" = "latest" ] && tag=$$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/derailed/k9s/releases/latest | sed 's#.*/tag/##'); \
+		curl -fsSL "https://github.com/derailed/k9s/releases/download/$$tag/k9s_Linux_$$arch.tar.gz" | $(SUDO) tar -xz -C /usr/local/bin k9s; \
+	}
+	@command -v flux >/dev/null || { \
+		echo "Installing the flux CLI (official install script)..."; \
+		curl -fsSL https://fluxcd.io/install.sh | $(SUDO) bash; \
+	}
+
 .PHONY: up
-up: deps registry-start ## Create both clusters, install Kratix, and provision the full demo (all Promises, teams, example project/environment/database) - idempotent
-	$(MAKE) --no-print-directory clusters
-	$(MAKE) --no-print-directory registry-configure
-	$(MAKE) --no-print-directory cert-manager
-	$(MAKE) --no-print-directory kratix-platform
-	$(MAKE) --no-print-directory minio
-	$(MAKE) --no-print-directory kratix-worker
-	$(MAKE) --no-print-directory kratix-platform-destination
-	$(MAKE) --no-print-directory metrics-server
-	$(MAKE) --no-print-directory argo-register-worker
-	$(MAKE) --no-print-directory demo-setup
-	@echo ""
-	@echo "Local registry:   localhost:$(REGISTRY_PORT)"
-	@echo "Platform context: $(PLATFORM_CTX)"
-	@echo "Worker context:   $(WORKER_CTX)"
+up: doctor deps registry-start ## Create both clusters, install Kratix, and provision the full demo (all Promises, teams, example project/environment/database) - idempotent
+	@set -e; \
+	start=$$(date +%s); \
+	echo "[1/10] Creating clusters..."; \
+	$(MAKE) --no-print-directory clusters; \
+	echo "[2/10] Wiring the local registry into both clusters..."; \
+	$(MAKE) --no-print-directory registry-configure; \
+	echo "[3/10] Installing cert-manager..."; \
+	$(MAKE) --no-print-directory cert-manager; \
+	echo "[4/10] Installing Kratix..."; \
+	$(MAKE) --no-print-directory kratix-platform; \
+	echo "[5/10] Installing MinIO..."; \
+	$(MAKE) --no-print-directory minio; \
+	echo "[6/10] Registering the worker cluster as a Destination..."; \
+	$(MAKE) --no-print-directory kratix-worker; \
+	echo "[7/10] Registering the platform cluster as a Destination..."; \
+	$(MAKE) --no-print-directory kratix-platform-destination; \
+	echo "[8/10] Installing metrics-server..."; \
+	$(MAKE) --no-print-directory metrics-server; \
+	echo "[9/10] Installing Argo CD and registering the worker cluster..."; \
+	$(MAKE) --no-print-directory argo-register-worker; \
+	echo "[10/10] Provisioning the demo (Promises, teams, example requests)..."; \
+	$(MAKE) --no-print-directory demo-setup; \
+	elapsed=$$(( $$(date +%s) - start )); \
+	echo ""; \
+	echo "Done in $$(( elapsed / 60 ))m $$(( elapsed % 60 ))s."; \
+	echo ""; \
+	echo "Local registry:   localhost:$(REGISTRY_PORT)"; \
+	echo "Platform context: $(PLATFORM_CTX)"; \
+	echo "Worker context:   $(WORKER_CTX)"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  make dev     # run the broker + UI, then browse the catalog at http://localhost:5173"; \
+	echo "  make verify  # confirm the demo came up healthy"
 
 .PHONY: clusters
 clusters: ## Create the platform + worker kind clusters (idempotent)
@@ -296,6 +417,39 @@ status: ## Show the state of both clusters
 	@echo ""
 	@echo "== platform ($(PLATFORM_CTX)): argocd =="
 	@kubectl --context $(PLATFORM_CTX) get pods -n argocd
+
+##@ Verification
+
+.PHONY: verify
+verify: ## Confirm `make up` came up healthy: cluster contexts respond, Kratix pods are Running, Destinations are Ready, and the broker serves a real catalog
+	@echo "Checking cluster contexts..."; \
+	kubectl --context $(PLATFORM_CTX) get nodes >/dev/null || { echo "FAIL: platform context $(PLATFORM_CTX) isn't responding"; exit 1; }; \
+	kubectl --context $(WORKER_CTX) get nodes >/dev/null || { echo "FAIL: worker context $(WORKER_CTX) isn't responding"; exit 1; }; \
+	echo "Checking Kratix pods..."; \
+	not_running=$$(kubectl --context $(PLATFORM_CTX) get pods -n kratix-platform-system --no-headers 2>/dev/null | grep -v -E 'Running|Completed' || true); \
+	if [ -n "$$not_running" ]; then echo "FAIL: pods not Running/Completed in kratix-platform-system:"; echo "$$not_running"; exit 1; fi; \
+	echo "Checking Destinations..."; \
+	for d in worker-1 platform-cluster; do \
+		ready=$$(kubectl --context $(PLATFORM_CTX) get destination "$$d" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null); \
+		if [ "$$ready" != "True" ]; then echo "FAIL: Destination $$d is not Ready"; exit 1; fi; \
+	done; \
+	echo "Checking the broker builds and serves a catalog..."; \
+	(cd broker && go build -o /tmp/verify-broker ./cmd/broker) || { echo "FAIL: broker failed to build"; exit 1; }; \
+	cd broker; \
+	BROKER_KUBE_CONTEXT=$(PLATFORM_CTX) /tmp/verify-broker >/tmp/verify-broker.log 2>&1 & \
+	pid=$$!; \
+	trap "kill $$pid 2>/dev/null" EXIT; \
+	ok=""; \
+	for i in $$(seq 1 30); do \
+		curl -sf http://localhost:8878/healthz >/dev/null 2>&1 && ok=1 && break; \
+		sleep 1; \
+	done; \
+	if [ -z "$$ok" ]; then echo "FAIL: broker never became healthy - see /tmp/verify-broker.log"; exit 1; fi; \
+	count=$$(curl -sf -H "Authorization: Bearer demo-key-payments" http://localhost:8878/api/promises | yq -p json '. | length' 2>/dev/null); \
+	if [ -z "$$count" ] || [ "$$count" -lt 1 ] 2>/dev/null; then echo "FAIL: /api/promises returned no catalog entries"; exit 1; fi; \
+	echo "Broker healthy, catalog has $$count visible entries."; \
+	echo ""; \
+	echo "All checks passed - the demo is healthy."
 
 .PHONY: platform-context
 platform-context: ## Point kubectl at the platform cluster
