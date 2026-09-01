@@ -194,7 +194,7 @@ up: doctor deps registry-start ## Create both clusters, install Kratix, and prov
 	$(MAKE) --no-print-directory flux-platform; \
 	echo "[4/9] Reconciling platform infra (cert-manager, Kratix, MinIO) via Flux..."; \
 	$(MAKE) --no-print-directory infra; \
-	kubectl --context $(PLATFORM_CTX) wait --for=condition=Ready --timeout=5m -n flux-system kustomization/minio || { echo "FAIL: platform infra (cert-manager/kratix/minio) didn't reconcile - check 'flux get kustomizations -n flux-system' and 'flux get helmreleases -n flux-system'"; exit 1; }; \
+	kubectl --context $(PLATFORM_CTX) wait --for=condition=Ready --timeout=10m -n flux-system kustomization/minio || { echo "FAIL: platform infra (cert-manager/kratix/minio) didn't reconcile - check 'flux get kustomizations -n flux-system' and 'flux get helmreleases -n flux-system'"; exit 1; }; \
 	echo "[5/9] Registering the worker cluster as a Destination..."; \
 	$(MAKE) --no-print-directory kratix-worker; \
 	echo "[6/9] Registering the platform cluster as a Destination..."; \

@@ -184,7 +184,12 @@ No changes needed to: `flux-worker`, `kratix-worker`,
   Non-goals) - currently floats to latest, matching today's behavior,
   but the repo pins `FLUX_VERSION` and cert-manager's chart version
   elsewhere for a documented reason (avoiding CLI/version drift); Kratix
-  staying unpinned is an inconsistency worth revisiting separately.
+  staying unpinned is an inconsistency worth revisiting separately. It's
+  also a slightly different risk now than under the old imperative flow:
+  under continuous Flux reconciliation (`interval: 1h`) an upstream
+  republish of the `kratix` chart tag can now auto-upgrade the running
+  controller unattended, whereas before it only re-resolved when someone
+  ran `make up`/`kratix-platform` by hand.
 - Swapping the `OCIRepository` source for a `GitRepository` against a
   real git remote, once one exists for this repo - already a one-object
   change per the existing `infra-apply` comments, unaffected by this

@@ -161,7 +161,7 @@ deployment kustomize-controller -n flux-system
 that Deployment's own identity).
 
 Capsule's webhooks need cert-manager, which this cluster already has
-(`clusters/platform/cert-manager-release.yaml`, Flux-managed) - no new prerequisite.
+(`clusters/platform/cert-manager/cert-manager-release.yaml`, Flux-managed) - no new prerequisite.
 
 ## Try it
 

@@ -29,7 +29,7 @@ make up
 ```
 
 First run takes roughly **10-20 minutes** - mostly Docker image pulls and
-Helm install waits across two clusters - and prints a `[step/10]` line before
+Helm install waits across two clusters - and prints a `[step/9]` line before
 each stage so you can see where it is. Re-running `make up` afterward is fast
 since every step is idempotent and skips what already exists.
 
@@ -120,6 +120,8 @@ below) - there's no imperative cert-manager/Kratix/MinIO install to hand off fro
 
 `make verify` checks all three `Kustomization`s report `Ready=True` as part of confirming the
 platform came up healthy.
+
+**Migrating an existing cluster:** a cluster created before this chain existed can't adopt it via `make infra` - Flux's Helm release naming (`<namespace>-<release>`, e.g. `default-kratix`) differs from the old imperative `helm upgrade --install kratix kratix`'s bare `kratix` release name, so Flux would try to install a second, colliding release rather than take over the first. Recreate the cluster instead: `make down && make up` (or `make restart`).
 
 ## Building a Promise
 
@@ -384,7 +386,7 @@ make status             # pod/destination health on both clusters
 make top                 # CPU/memory per pod on both clusters
 make logs-platform       # tail the Kratix controller
 make logs-flux-worker    # tail Flux on the worker cluster
-make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination)
+make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination, and where the cert-manager/kratix/minio infra chain reconciles - check here first if make up fails during "Reconciling platform infra")
 make k9s-platform        # k9s on the platform cluster
 make k9s-worker          # k9s on the worker cluster
 make argo-ui              # port-forward the Argo CD UI to http://localhost:8080

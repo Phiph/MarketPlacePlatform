@@ -36,7 +36,7 @@ spec:
   path: "./cert-manager"
   prune: true
   wait: true
-  timeout: 3m
+  timeout: 5m
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
