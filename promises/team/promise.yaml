@@ -22,11 +22,20 @@ spec:
   requiredPromises:
   - name: business-unit
     version: v0.2.0
-  # See promises/business-unit/promise.yaml for why this selector - same
-  # platform-cluster reasoning applies here.
+  # The output Namespace lands on BOTH clusters. Platform: see
+  # promises/business-unit/promise.yaml for why - same reasoning applies
+  # here. Worker: so database/container requests submitted via the
+  # broker's flat/default route (which places them in this team-<team>
+  # namespace, not a project-environment one) have a matching namespace to
+  # land their worker-side output in - see
+  # docs/superpowers/specs/2026-09-01-project-namespace-projection-design.md.
+  # destinationSelectors use OR semantics across list entries: a
+  # Destination matching ANY one of these receives the scheduled output.
   destinationSelectors:
   - matchLabels:
       environment: platform
+  - matchLabels:
+      environment: dev
   api:
     apiVersion: apiextensions.k8s.io/v1
     kind: CustomResourceDefinition
