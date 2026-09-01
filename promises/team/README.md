@@ -41,9 +41,13 @@ ship declaratively via Flux: see `promises/business-unit/README.md`'s "Provision
 matters" section for the deadlock this avoids, and why the ordering still has to be respected
 even though `Tenant` and `Namespace` come from two different Promises.
 
-`destinationSelectors: [{matchLabels: {environment: platform}}]` (`promise.yaml`) lands every
-team's `Namespace` on the **platform** cluster, same reasoning as `business-unit` - see that
-Promise's README.
+`destinationSelectors` (`promise.yaml`) lands every team's `Namespace` on **both** the platform
+cluster (same reasoning as `business-unit` - see that Promise's README) and the worker cluster
+(`worker-1`) - see
+`docs/superpowers/specs/2026-09-01-project-namespace-projection-design.md`. The worker-side
+copy exists so `database`/`container` requests submitted via the broker's flat/default route
+(which places them in this team's `team-<team>` namespace) have a matching namespace to land
+their worker-side output in.
 
 The namespace naming convention (`team-<name>`) is single-sourced in
 `broker/internal/tenant/tenant.go`'s `Namespace()` function - this pipeline's `namespace_name`

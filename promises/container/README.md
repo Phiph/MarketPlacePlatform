@@ -5,8 +5,9 @@ Runs a single container image as a Kubernetes `Deployment`, with an optional
 this marketplace. See
 `docs/superpowers/specs/2026-08-14-container-promise-design.md` for the
 full design, including why the API stays low-level (a future `Service`
-compound Promise will bundle this with `database` behind a simpler API)
-and the current worker-cluster tenancy limitation (next paragraph).
+compound Promise will bundle this with `database` behind a simpler API).
+See "Namespace" and "Known limitation" below for how/where this pipeline's
+output lands.
 
 Marked `marketplace.kratix.io/visible: "true"`: self-served through the
 catalog, like `database`.
@@ -26,14 +27,19 @@ convention"): owner `platform-team`, lifecycle `experimental`, support
   with a `port` and one `env` var set, so both the `Deployment` and
   `Service` code paths get exercised.
 
-**Known limitation:** the `Deployment`/`Service` this pipeline writes
-always land in the `default` namespace on the worker cluster
-(`kind-worker`), regardless of which namespace the `Container` request
-itself lives in on the platform cluster - the worker cluster has no
-per-team/environment namespaces yet. Matches `database`'s existing
-precedent; see the design doc's "Known limitation" section for why this
-isn't fixed here. It also means no cpu/memory ceiling is enforced on this workload today -
-see the design doc's "Known limitation" section for why.
+**Namespace:** the `Deployment`/`Service` this pipeline writes land in the
+same project-environment namespace the `Container` request itself lives in
+on the platform cluster (`project-<team>-<project>-<environment>`), read
+via `resource.get_namespace()`. That namespace is created on the worker
+cluster by `promises/environment`'s pipeline, not by this one - see
+`docs/superpowers/specs/2026-09-01-project-namespace-projection-design.md`.
+
+**Known limitation:** that worker-side namespace carries no RBAC or
+resource-quota enforcement - no Capsule `Tenant`/`LimitRange` is mirrored
+to `kind-worker`, so no cpu/memory ceiling is enforced on this workload
+today. See the project-namespace-projection design doc's "Non-goals" for
+why full tenant parity on the worker cluster stays a separate, larger
+follow-up.
 
 ## Try it
 

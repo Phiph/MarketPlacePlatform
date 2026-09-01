@@ -17,7 +17,11 @@ owner `platform-team`, lifecycle `experimental`, support `#platform-eng`, policy
 
 - `promise.yaml` - the `Environment` CRD (`demo.kratix.io/v1alpha1`), with three required
   fields: `spec.project` (name of an already-created `Project`, same namespace),
-  `spec.team`, `spec.businessUnit`.
+  `spec.team`, `spec.businessUnit`. `spec.destinationSelectors` schedules this Promise's
+  output to **both** the platform cluster and the worker cluster (`worker-1`) - see
+  `docs/superpowers/specs/2026-09-01-project-namespace-projection-design.md` - so the
+  `Namespace` the pipeline below writes lands on both, giving `database`/`container`
+  requests into this project-environment a matching namespace on the worker cluster too.
 - `workflows/resource/configure/environment-configure` - a Python pipeline that runs
   per-request, reading the request's name (the environment) plus `spec.project`/`spec.team`/
   `spec.businessUnit`, and writing **only** a `Namespace` named
@@ -101,6 +105,7 @@ Then:
 kubectl --context kind-platform get environments.demo.kratix.io -n team-checkout dev -w
 kubectl --context kind-platform get ns project-checkout-checkout-service-dev --show-labels
 kubectl --context kind-platform get rolebindings -n project-checkout-checkout-service-dev
+kubectl --context kind-worker get ns project-checkout-checkout-service-dev --show-labels
 ```
 
 The `RoleBinding` comes from the same shared `GlobalTenantResource` `team`'s namespaces get -

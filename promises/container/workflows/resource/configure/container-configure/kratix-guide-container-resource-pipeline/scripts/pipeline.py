@@ -52,11 +52,7 @@ def main():
     sdk = ks.KratixSDK()
     resource = sdk.read_resource_input()
     name = resource.get_name()
-    # Hardcoded, not resource.get_namespace(): the worker cluster (where this
-    # Deployment/Service land) has no per-team/environment namespaces yet -
-    # see docs/superpowers/specs/2026-08-14-container-promise-design.md,
-    # "Known limitation". Matches database's existing precedent.
-    namespace = "default"
+    namespace = resource.get_namespace()
     spec = {
         "image": resource.get_value("spec.image"),
         "replicas": resource.get_value("spec.replicas", default=1),

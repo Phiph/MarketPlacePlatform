@@ -1,0 +1,247 @@
+# Project Namespace Projection to Worker Destinations
+
+## Problem
+
+A resource request (e.g. `Database`, `Container`) already lives in the
+right namespace on the platform cluster -
+`project-{team}-{project}-{environment}`, computed identically by the
+broker (`broker/internal/tenant.ProjectEnvironmentNamespace()`) and by
+`promises/environment`'s pipeline (`namespace_name()`). But the *output*
+those Promises schedule to the worker cluster (`kind-worker`, Destination
+`worker-1`) ignores that entirely: `database`'s and `container`'s resource
+pipelines both hardcode `namespace: "default"` on the manifests they
+write, regardless of which project/environment the request belongs to.
+Every workload from every team/project/environment lands in one shared
+`default` namespace on the worker cluster.
+
+This is a known, deliberately deferred gap - the `Container` design doc
+(`docs/superpowers/specs/2026-08-14-container-promise-design.md`, "Known
+limitation") flags it explicitly: *"worth a design of its own once more
+than one workload-producing Promise exists."* That's now true (`database`
++ `container`).
+
+**Prior art note:** `docs/superpowers/specs/2026-08-14-container-workload-logs-design.md`
+("Worker namespaces" section) separately proposed having
+`container-configure` create a worker-side namespace directly, named after
+`resource.get_namespace()`. That design predates the `Team` → `Project` →
+`Environment` hierarchy and used a team-level namespace convention
+(`team-<team>`); its namespace-creation piece was never implemented (the
+pipeline still hardcodes `"default"` today). This design supersedes that
+piece: it adopts the current project-environment-level convention instead,
+and creates the namespace via `promises/environment` rather than inside
+each workload pipeline (see "Approach" below). If the Argo CD logs work
+resumes, it should build on the namespace this design produces rather than
+re-deriving its own.
+
+That prior design's infra scaffolding is already partially committed and
+unaffected by this change (nothing in it currently consumes a workload's
+namespace - `container-configure` writes no `Application` manifest yet,
+and no `broker/internal/argoclient` exists). But one already-committed
+piece bakes in the stale convention: `promises/team`'s pipeline
+(`pipeline.py:44`) emits an `AppProject` with
+`destinations: [{name: "worker-1", namespace: "team-{team}"}]`. That
+won't cover the project-environment namespace this design produces -
+whoever resumes the Argo work will need to update that `AppProject`'s
+`destinations`/`sourceNamespaces` accordingly (see "Open follow-ups").
+
+## Goals
+
+- A `Database` or `Container` request's worker-side workload lands in a
+  namespace named after the project/environment it belongs to
+  (`project-{team}-{project}-{environment}`), not `default`.
+- The same namespace name is used on both clusters for a given
+  project/environment - one name, everywhere.
+- Any future workload-producing Promise gets this behavior by construction
+  (reads `resource.get_namespace()`), without needing its own
+  namespace-creation logic.
+
+## Non-goals
+
+- **No RBAC or quota enforcement on the worker cluster.** This design
+  creates the `Namespace` object there for routing/traceability only. No
+  Capsule `Tenant`/`LimitRange` gets mirrored to `kind-worker`; cpu/memory
+  ceilings on worker workloads remain unenforced, unchanged from the
+  `Container` design doc's existing "Known limitation." Full tenant
+  parity on the worker cluster stays a separate, bigger follow-up.
+- **No `BusinessUnit` worker-side presence.** Capsule `Tenant` objects stay
+  platform-only, as today - Capsule isn't installed on the worker cluster
+  and this design doesn't change that.
+
+  **Amendment (post-review):** `Team`'s `Namespace` **is** now projected to
+  the worker cluster too, same mechanism as `Environment` - see "Approach"
+  below. The original version of this Non-goal excluded it, but that was a
+  defect: the broker's flat/default request route
+  (`broker/internal/api/server.go`'s `submitRequest`) and the marketplace
+  UI's default "Team default" target both submit `Database`/`Container`
+  requests into `team-<team>`, not a project-environment namespace - a path
+  this repo's own `make up` demo (`promises/database/example-resource-team.yaml`)
+  exercises directly. Excluding `Team` would have regressed that path from
+  "lands in `default`, works" to "lands in `team-<team>` on the worker,
+  Flux can never apply it." Team-level RBAC/quota enforcement on the
+  worker remains out of scope, same as the project-environment case -
+  only the `Namespace` object is projected.
+- **No migration tooling for already-provisioned Environments.** This is
+  a local dev/demo platform; existing local clusters pick this up via the
+  usual `make down && make up` recovery path, not a bespoke backfill
+  mechanism.
+- **No change to the Zalando Postgres operator's scope.** It already
+  watches `watched_namespace: '*'` and holds cluster-scoped RBAC
+  (`ClusterRole`/`ClusterRoleBinding`), so it needs no changes to operate
+  against a `postgresql` CR in any project-environment namespace.
+
+## Approach
+
+`promises/environment`'s pipeline is already the single place that
+computes the canonical namespace name and writes the one `Namespace`
+object for it - currently scheduled only to the platform cluster via
+`destinationSelectors: [{matchLabels: {environment: platform}}]`. Kratix's
+`destinationSelectors` use OR semantics across list entries (a Destination
+matching *any* entry receives the scheduled output), so adding a second
+entry matching `worker-1`'s label (`{matchLabels: {environment: dev}}`)
+makes that same `Namespace` object land on both clusters, with no new
+Promise, pipeline, or duplicated namespace-creation logic.
+
+**Amendment (post-review): `promises/team`'s pipeline gets the identical
+treatment.** The broker has two request routes, not one: the scoped route
+(`POST .../requests?project=...&environment=...`) places a request in a
+project-environment namespace, but the *default* flat route
+(`submitRequest` in `broker/internal/api/server.go`, and the marketplace
+UI's default "Team default" target) places it in `team-<team>` instead.
+`database`/`container` requests submitted that way need `team-<team>`
+projected to the worker cluster too, or their workload manifest names a
+namespace Flux can never apply. `promises/team/promise.yaml` gets the same
+second `destinationSelectors` entry as `promises/environment`
+(`{matchLabels: {environment: dev}}`), so the `Namespace` its pipeline
+already writes lands on both clusters, exactly like the project-environment
+case below.
+
+`database`'s and `container`'s resource pipelines then switch from
+hardcoding `namespace: "default"` to `resource.get_namespace()` (a
+`kratix_sdk` method that reads the request CR's own `metadata.namespace`
+on the platform cluster - already the correct namespace, project-environment
+or team-level depending on which route the broker used, set at request
+time).
+
+**Ordering is already guaranteed, not newly enforced:** a `Database` or
+`Container` request can only be created inside a namespace that already
+exists (Kubernetes admission would reject the request otherwise) -
+either a project-environment namespace (only created by successfully
+provisioning the corresponding `Environment` first) or a team namespace
+(only created by successfully provisioning the `Team` first, which every
+authenticated caller already has by construction). So by the time a
+workload-producing Promise's pipeline runs, the namespace this design
+projects to the worker cluster - whichever one applies - has already been
+scheduled there too.
+
+### Why not have each workload pipeline create its own namespace?
+
+Considered and rejected: every current and future workload-producing
+Promise (`database`, `container`, ...) would need to duplicate the same
+`Namespace`-emitting logic, each becoming a second source of truth for
+that object's shape (labels, `capsule.clastix.io/tenant`, etc.). Kratix
+applies all scheduled output for a destination via Flux regardless of
+which Promise produced it, so multiple pipelines emitting an
+identically-named `Namespace` object is not unsafe by itself - but it is
+unnecessary duplication when `promises/environment` already owns this
+object's definition on the platform cluster. Widening its
+`destinationSelectors` reuses that single definition instead of forking
+it.
+
+## Architecture
+
+```
+Environment request (platform cluster)             Team request (platform cluster)
+  -> environment-configure pipeline                   -> team-configure pipeline
+     -> writes ONE Namespace manifest                    -> writes ONE Namespace manifest
+        (project-{team}-{project}-{environment})            (team-{team})
+  -> destinationSelectors: [platform, worker] (OR)      -> destinationSelectors: [platform, worker] (OR)
+        -> kind-platform: Namespace created (as today)        -> kind-platform: Namespace created (as today)
+        -> kind-worker:   Namespace created (NEW)              -> kind-worker:   Namespace created (NEW)
+
+Database/Container request (platform cluster, inside either namespace above)
+  -> resource pipeline reads resource.get_namespace()
+     -> writes workload manifest with that namespace
+  -> Kratix schedules it to worker-1 (default, no selector)
+        -> kind-worker: workload lands in the same namespace
+           it lives in on the platform cluster (previously: "default")
+```
+
+## Components
+
+| Piece | Where | Change |
+|---|---|---|
+| Environment namespace scheduling | `promises/environment/promise.yaml` | Add a second `destinationSelectors` entry matching `worker-1` (`environment: dev`) |
+| Environment docs | `promises/environment/README.md` | Note the `Namespace` output now lands on both clusters |
+| Team namespace scheduling | `promises/team/promise.yaml` | Same as Environment: add a second `destinationSelectors` entry matching `worker-1` (`environment: dev`), so requests submitted via the broker's flat/default route also get a matching worker namespace |
+| Team docs | `promises/team/README.md` | Note the `Namespace` output now lands on both clusters |
+| Database pipeline | `promises/database/workflows/resource/configure/database-configure/kratix-guide-database-resource-pipeline/scripts/pipeline.py` | Replace hardcoded `"namespace": "default"` with `resource.get_namespace()` |
+| Container pipeline | `promises/container/workflows/resource/configure/container-configure/kratix-guide-container-resource-pipeline/scripts/pipeline.py` | Replace hardcoded `namespace = "default"` (and its now-stale comment) with `resource.get_namespace()` |
+| Container docs | `promises/container/README.md`, and the "Known limitation" section referenced from the design doc | Update to reflect the namespace half of the gap is resolved; RBAC/quota parity remains open |
+
+No changes needed to: the broker (already places requests in the correct
+namespace either way), the `Database`/`Container` CRD schemas, the Zalando
+operator configuration, or `promises/business-unit`.
+
+## Error handling
+
+- If an `Environment`'s `Namespace` hasn't yet been delivered to
+  `worker-1` when a `Database`/`Container` pipeline runs (Flux delivery
+  lag), the workload manifest still gets written with the correct
+  namespace name; Flux will apply it once the namespace exists (Flux
+  retries on missing-namespace errors like it does for any other ordering
+  dependency across manifests in the same or a later sync). No new
+  handling needed - this is the same eventual-consistency behavior Flux
+  already provides for every other output in this repo.
+- No new failure mode is introduced on the broker side - the request CR's
+  namespace was already being set correctly before this change.
+
+## Testing
+
+- **`promises/environment` pipeline:** no unit tests exist today for this
+  pipeline; add one asserting the `Namespace` manifest content is
+  unchanged (this design only touches `promise.yaml`'s
+  `destinationSelectors`, not the pipeline's output).
+- **`promises/database` pipeline:** no unit tests exist today; add one
+  covering `pipeline.py`'s manifest construction, asserting the output's
+  `metadata.namespace` equals `resource.get_namespace()`'s value rather
+  than `"default"`.
+- **`promises/container` pipeline:** `test_pipeline.py` already exists;
+  update/add cases asserting `build_deployment`/`build_service` receive
+  the namespace from `resource.get_namespace()`, not the literal
+  `"default"`.
+- **End-to-end** (manual, `make up`): provision an `Environment` for a
+  project, then request a `Database` and a `Container` into it; confirm
+  via `kubectl --context kind-worker get namespace
+  project-<team>-<project>-<environment>` that the namespace exists on
+  the worker cluster, and that the resulting `postgresql`/`Deployment`
+  objects land inside it rather than in `default`.
+
+## Open follow-ups (not built here)
+
+- Full Capsule-parity tenancy mirror on the worker cluster (RBAC,
+  `LimitRange`/quota enforcement) - remains its own, larger design, as
+  already flagged in the `Container` design doc.
+- Resuming the Argo CD workload-logs design
+  (`2026-08-14-container-workload-logs-design.md`): its "Worker
+  namespaces" section should be revised to reuse this design's
+  project-environment namespace instead of re-deriving a team-level one.
+  Concretely, that means updating `promises/team`'s already-committed
+  `AppProject` (`pipeline.py:44`, `destinations`/`sourceNamespaces`
+  currently pinned to `team-{team}`) to scope against the
+  project-environment namespace(s) a team's `Application`s actually need,
+  once `container-configure` starts emitting `Application` manifests.
+- **A shared platform conventions package for pipelines.** Naming
+  conventions like namespace strings and their labels are currently
+  duplicated per-language with no shared enforcement: the Go broker has
+  one canonical source (`broker/internal/tenant/tenant.go`), but every
+  Python pipeline re-implements its own copy, linked only by comments
+  pointing at each other. That's exactly how `promises/team`'s `AppProject`
+  above drifted out of sync with the namespace convention it depends on.
+  A small shared Python package (e.g. `team_namespace()`,
+  `project_environment_namespace()`, the `marketplace.kratix.io/*` label
+  constants) installed into every pipeline's Docker image would collapse
+  that duplication on the Python side; Go/Python parity would still rely
+  on paired comments (or generated conventions) absent real codegen
+  tooling. Deliberately out of scope here - packaging and versioning a
+  shared library across five pipeline images is its own design, not a
+  natural extension of this fix.
