@@ -18,12 +18,19 @@ metadata:
     marketplace.kratix.io/policy: internal
   name: environment
 spec:
-  # Same reasoning as promises/team/promise.yaml: the output Namespace has to
-  # land on the platform cluster, since that's where Capsule's webhooks and
-  # the marketplace broker run.
+  # The output Namespace lands on BOTH clusters. Platform: same reasoning
+  # as promises/team/promise.yaml - that's where Capsule's webhooks and the
+  # marketplace broker run. Worker: so database/container (and any future
+  # workload-producing Promise) have a matching namespace to land their
+  # output in, instead of falling back to "default" - see
+  # docs/superpowers/specs/2026-09-01-project-namespace-projection-design.md.
+  # destinationSelectors use OR semantics across list entries: a
+  # Destination matching ANY one of these receives the scheduled output.
   destinationSelectors:
   - matchLabels:
       environment: platform
+  - matchLabels:
+      environment: dev
   api:
     apiVersion: apiextensions.k8s.io/v1
     kind: CustomResourceDefinition
