@@ -406,6 +406,11 @@ verify: ## Confirm `make up` came up healthy: cluster contexts respond, Kratix p
 	@echo "Checking cluster contexts..."; \
 	kubectl --context $(PLATFORM_CTX) get nodes >/dev/null || { echo "FAIL: platform context $(PLATFORM_CTX) isn't responding"; exit 1; }; \
 	kubectl --context $(WORKER_CTX) get nodes >/dev/null || { echo "FAIL: worker context $(WORKER_CTX) isn't responding"; exit 1; }; \
+	echo "Checking platform infra Kustomizations..."; \
+	for k in cert-manager kratix minio; do \
+		ready=$$(kubectl --context $(PLATFORM_CTX) get kustomization "$$k" -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null); \
+		if [ "$$ready" != "True" ]; then echo "FAIL: Kustomization $$k (flux-system) is not Ready"; exit 1; fi; \
+	done; \
 	echo "Checking Kratix pods..."; \
 	not_running=$$(kubectl --context $(PLATFORM_CTX) get pods -n kratix-platform-system --no-headers 2>/dev/null | grep -v -E 'Running|Completed' || true); \
 	if [ -n "$$not_running" ]; then echo "FAIL: pods not Running/Completed in kratix-platform-system:"; echo "$$not_running"; exit 1; fi; \
