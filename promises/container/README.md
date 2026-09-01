@@ -1,5 +1,8 @@
 # `container` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 Runs a single container image as a Kubernetes `Deployment`, with an optional
 `Service` when `spec.port` is set - the low-level workload primitive for
 this marketplace. See

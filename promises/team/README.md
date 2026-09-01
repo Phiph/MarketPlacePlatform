@@ -1,5 +1,8 @@
 # `team` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 Provisions a team's namespace inside its business unit's Capsule Tenant (see the sibling
 `business-unit` Promise, `promises/business-unit/` - **provision the business unit first**,
 and confirm its Tenant actually exists, before submitting any `Team` request that references
