@@ -1,17 +1,8 @@
-import kratix_sdk as ks
-import yaml
-
-
-def main():
-    sdk = ks.KratixSDK()
-    resource = sdk.read_resource_input()
-    name = resource.get_name()
-    size = resource.get_value("spec.size")
-
-    manifest = {
+def build_manifest(name: str, namespace: str, size: str) -> dict:
+    return {
         "apiVersion": "acid.zalan.do/v1",
         "kind": "postgresql",
-        "metadata": {"name": name, "namespace": "default"},
+        "metadata": {"name": name, "namespace": namespace},
         "spec": {
             "teamId": "kratix",
             "enableLogicalBackup": True,
@@ -21,6 +12,19 @@ def main():
             "postgresql": {"version": "16"},
         },
     }
+
+
+def main():
+    import kratix_sdk as ks
+    import yaml
+
+    sdk = ks.KratixSDK()
+    resource = sdk.read_resource_input()
+    name = resource.get_name()
+    size = resource.get_value("spec.size")
+    namespace = resource.get_namespace()
+
+    manifest = build_manifest(name, namespace, size)
     data = yaml.safe_dump(manifest).encode("utf-8")
     sdk.write_output("database.yaml", data)
 
