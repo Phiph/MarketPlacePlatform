@@ -1,5 +1,8 @@
 # `environment` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 The second half of the **Team -> Projects -> Environments** layer (see the sibling `project`
 Promise, `promises/project/`, for the first half). An Environment (`dev`, `staging`, `prod`,
 ...) is one deployable namespace belonging to a Project - a project isn't a single namespace,

@@ -1,5 +1,8 @@
 # `business-unit` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 Provisions a business unit's **Capsule Tenant** (https://projectcapsule.dev) - the mechanism
 that turns "this business unit's teams shouldn't touch resources outside their own namespace"
 from an application-code convention into something Kubernetes' own RBAC and admission

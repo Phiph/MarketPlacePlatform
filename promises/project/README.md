@@ -1,5 +1,8 @@
 # `project` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 The first half of the **Team -> Projects -> Environments** layer sketched in
 `promises/business-unit/README.md`'s original "future direction" note: a team can own multiple
 Projects, and each Project can have multiple Environments (see the sibling `environment`

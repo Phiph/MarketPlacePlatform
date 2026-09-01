@@ -1,5 +1,8 @@
 # `database` Promise
 
+*See the root README's [CNCF ecosystem in this demo](../../README.md#cncf-ecosystem-in-this-demo)
+for how Kratix Promises fit alongside Flux, Argo CD, Capsule, and cert-manager.*
+
 A minimal, working Promise to learn the shape of Kratix Promises from — it
 reproduces [Kratix's "Writing your first Promise" tutorial](https://docs.kratix.io/main/guides/writing-a-promise)
 and was generated with the `kratix` CLI (`make cli` fetches it to `bin/kratix`).

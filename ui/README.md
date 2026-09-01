@@ -1,5 +1,8 @@
 # Marketplace UI
 
+*See the root README's [CNCF ecosystem in this demo](../README.md#cncf-ecosystem-in-this-demo)
+for how this fits alongside Kratix, Flux, Argo CD, Capsule, and cert-manager.*
+
 A [shadcn/ui](https://ui.shadcn.com)-based frontend for the [marketplace broker](../broker):
 browse the catalog of Promises published by the platform team, submit requests
 against them through a form generated from each Promise's JSON Schema, and

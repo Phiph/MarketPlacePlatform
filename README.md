@@ -1,7 +1,12 @@
 # MarketPlacePlatform
 
-A demo platform showing platform engineers how to build their own enterprise
-internal developer platform, built on [Kratix](https://kratix.io).
+A demo platform showing platform engineers how a handful of CNCF ecosystem
+projects compose into a working, self-service internal developer platform.
+Kubernetes, Helm, Flux, Argo CD, cert-manager, and Capsule handle the
+platform's plumbing; [Kratix](https://kratix.io) is the piece that turns a
+Promise (a service definition) into a self-service API for the rest. See
+[CNCF ecosystem in this demo](#cncf-ecosystem-in-this-demo) for what each
+project is doing and why.
 
 **TL;DR:** install [Docker](https://www.docker.com/products/docker-desktop),
 clone this repo, then:
@@ -14,7 +19,27 @@ make dev  # once up finishes: broker + UI at http://localhost:5173
 Works on macOS, Linux, and Windows-via-WSL2. Read on for details, or jump to
 [Windows (WSL2)](#windows-wsl2) if that's you.
 
-## Running Kratix locally
+## CNCF ecosystem in this demo
+
+No single project here is the platform - each one owns a specific piece, and
+the demo's job is to show how they fit together.
+
+| Project | CNCF status | Role in this demo |
+|---|---|---|
+| [Kubernetes](https://kubernetes.io) | Graduated | The substrate everything else runs on (via [kind](https://kind.sigs.k8s.io) for local dev) |
+| [containerd](https://containerd.io) | Graduated | Container runtime inside the kind nodes |
+| [Helm](https://helm.sh) | Graduated | Installs Kratix and cert-manager |
+| [Flux](https://fluxcd.io) | Graduated | GitOps delivery of Promise workloads to Destinations, and of the platform cluster's own infra (see [Platform infra](#platform-infra-fluxgitops)) |
+| [Argo CD](https://argo-cd.readthedocs.io) | Graduated (part of the Argo project) | Per-team, read-only application status/visibility (see [Marketplace broker API](#marketplace-broker-api)) |
+| [cert-manager](https://cert-manager.io) | Graduated | Issues the TLS/webhook certs Kratix's Helm chart requires |
+| [Capsule](https://projectcapsule.dev) | Sandbox | Enforces the multi-tenant namespace/RBAC boundary between business units and teams |
+| [Kratix](https://kratix.io) | - | The Promise mechanism: turns a resource request into a pipeline run and a set of Kubernetes objects |
+
+Kratix isn't itself a CNCF project (unlike the others above); it's included
+because it's the piece that ties requests to pipelines - not because it's
+the centerpiece of the demo.
+
+## Running the demo locally
 
 Prerequisites: [Docker](https://www.docker.com/products/docker-desktop), and
 on macOS, [Homebrew](https://brew.sh). Everything else (`kind`, `kubectl`,
