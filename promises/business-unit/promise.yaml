@@ -20,7 +20,7 @@ spec:
   # Both pipeline stages write to the platform cluster: Capsule's controller
   # and the broker both run there, and platform-cluster is the only
   # Destination registered with `strictMatchLabels: true` (see
-  # hack/kratix/platform-values.yaml), so it only receives output that
+  # clusters/platform/kratix/kratix-release.yaml), so it only receives output that
   # explicitly asks for it via this selector.
   destinationSelectors:
   - matchLabels:

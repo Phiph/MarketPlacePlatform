@@ -5,9 +5,10 @@
 # The kratix-platform-system Namespace and the default/minio-credentials
 # Secret are deliberately NOT declared here - the Kratix Helm chart already
 # owns both (the namespace as where its controller-manager runs, the secret
-# via platform-values.yaml's additionalResources), and Helm refuses to adopt
-# resources it didn't create. The `minio` Makefile target now runs after
-# `kratix-platform` so both exist by the time this file is applied.
+# via ../kratix/kratix-release.yaml's additionalResources), and Helm refuses
+# to adopt resources it didn't create. The `minio` Kustomization's
+# `dependsOn: [{name: kratix}]` (see ../../../hack/kratix/platform-infra-source.yaml)
+# is what guarantees both exist by the time this file is applied.
 apiVersion: v1
 kind: Service
 metadata:

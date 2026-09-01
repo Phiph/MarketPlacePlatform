@@ -13,7 +13,7 @@ dex:
 configs:
   params:
     # Plain HTTP inside the cluster - matches this repo's existing "insecure:
-    # true" pattern for MinIO (hack/kratix/platform-values.yaml); there's no
+    # true" pattern for MinIO (clusters/platform/kratix/kratix-release.yaml); there's no
     # cert-manager-issued cert for argocd-server and none is needed for local
     # dev. `make argo-ui` (Task 4) reaches it via port-forward.
     server.insecure: true
