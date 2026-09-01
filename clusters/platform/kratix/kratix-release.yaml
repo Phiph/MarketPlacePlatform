@@ -1,0 +1,91 @@
+# Replaces the Makefile's old `kratix-platform` target (`helm upgrade
+# --install kratix kratix --repo ... -f hack/kratix/platform-values.yaml
+# --wait --timeout 5m`, no explicit namespace, so it landed in "default" -
+# targetNamespace below matches that). version is intentionally unpinned
+# ("*"), matching that command's own lack of a --version flag - see the
+# design spec's Non-goals for why no pin was added here.
+#
+# Points Kratix at the local MinIO (../minio/minio-install.yaml) and
+# pre-registers both the worker cluster and the platform cluster itself as
+# Destinations (some Promises - e.g. compound Promises - require the platform
+# cluster to also be a valid Destination).
+#
+# Secret keys (accessKeyID/secretAccessKey) must match what Kratix's own S3
+# writer expects - see https://github.com/syntasso/kratix/blob/main/lib/writers/s3.go
+#
+# The chart's default values.yaml ships a non-empty *deprecated* stateStores
+# list that (a) creates its own "default" BucketStateStore + minio-credentials
+# Secret, colliding by name with the ones below, and (b) applies as a
+# post-install hook that runs *after* additionalResources, so it would
+# silently overwrite our correct secret keys with the wrong ones. Disable it.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kratix
+  namespace: flux-system
+spec:
+  interval: 1h
+  targetNamespace: default
+  install:
+    createNamespace: true
+  chart:
+    spec:
+      chart: kratix
+      version: "*"
+      sourceRef:
+        kind: HelmRepository
+        name: syntasso
+        namespace: flux-system
+  values:
+    stateStores: []
+    destinations: []
+    additionalResources:
+      - apiVersion: v1
+        kind: Secret
+        metadata:
+          name: minio-credentials
+          namespace: default
+        type: Opaque
+        stringData:
+          accessKeyID: minioadmin
+          secretAccessKey: minioadmin
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: BucketStateStore
+        metadata:
+          name: default
+        spec:
+          endpoint: minio.kratix-platform-system.svc.cluster.local
+          insecure: true
+          bucketName: kratix
+          authMethod: accessKey
+          secretRef:
+            name: minio-credentials
+            namespace: default
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: Destination
+        metadata:
+          name: worker-1
+          labels:
+            environment: dev
+        spec:
+          path: worker-1
+          stateStoreRef:
+            name: default
+            kind: BucketStateStore
+      # strictMatchLabels: true keeps this out of the default "no
+      # destinationSelectors -> every Destination" scheduling behaviour (see
+      # https://docs.kratix.io/main/reference/destinations/multidestination-management),
+      # so existing Promises that don't explicitly ask for the platform cluster
+      # (like the promises/database starter) keep landing on worker-1 only.
+      - apiVersion: platform.kratix.io/v1alpha1
+        kind: Destination
+        metadata:
+          name: platform-cluster
+          labels:
+            environment: platform
+        spec:
+          path: platform-cluster
+          strictMatchLabels: true
+          stateStoreRef:
+            name: default
+            kind: BucketStateStore

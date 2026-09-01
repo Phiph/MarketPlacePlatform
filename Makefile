@@ -45,7 +45,6 @@ K9S_LINUX_VERSION   ?= latest
 SUDO := $(shell [ "$$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && echo sudo)
 
 KIND_NODE_IMAGE      ?= kindest/node:v1.33.1
-CERT_MANAGER_VERSION ?= v1.15.0
 KRATIX_HELM_REPO     := https://syntasso.github.io/helm-charts
 
 # Newest Flux release that still serves the Bucket/Kustomization v1beta1 API
@@ -187,25 +186,24 @@ deps-linux: ## (internal, called by `deps` on Linux/WSL2) install kind/kubectl/h
 up: doctor deps registry-start ## Create both clusters, install Kratix, and provision the full demo (all Promises, teams, example project/environment/database) - idempotent
 	@set -e; \
 	start=$$(date +%s); \
-	echo "[1/10] Creating clusters..."; \
+	echo "[1/9] Creating clusters..."; \
 	$(MAKE) --no-print-directory clusters; \
-	echo "[2/10] Wiring the local registry into both clusters..."; \
+	echo "[2/9] Wiring the local registry into both clusters..."; \
 	$(MAKE) --no-print-directory registry-configure; \
-	echo "[3/10] Installing cert-manager..."; \
-	$(MAKE) --no-print-directory cert-manager; \
-	echo "[4/10] Installing Kratix..."; \
-	$(MAKE) --no-print-directory kratix-platform; \
-	echo "[5/10] Installing MinIO..."; \
-	$(MAKE) --no-print-directory minio; \
-	echo "[6/10] Registering the worker cluster as a Destination..."; \
+	echo "[3/9] Installing Flux on the platform cluster..."; \
+	$(MAKE) --no-print-directory flux-platform; \
+	echo "[4/9] Reconciling platform infra (cert-manager, Kratix, MinIO) via Flux..."; \
+	$(MAKE) --no-print-directory infra; \
+	kubectl --context $(PLATFORM_CTX) wait --for=condition=Ready --timeout=10m -n flux-system kustomization/minio || { echo "FAIL: platform infra (cert-manager/kratix/minio) didn't reconcile - check 'flux get kustomizations -n flux-system' and 'flux get helmreleases -n flux-system'"; exit 1; }; \
+	echo "[5/9] Registering the worker cluster as a Destination..."; \
 	$(MAKE) --no-print-directory kratix-worker; \
-	echo "[7/10] Registering the platform cluster as a Destination..."; \
+	echo "[6/9] Registering the platform cluster as a Destination..."; \
 	$(MAKE) --no-print-directory kratix-platform-destination; \
-	echo "[8/10] Installing metrics-server..."; \
+	echo "[7/9] Installing metrics-server..."; \
 	$(MAKE) --no-print-directory metrics-server; \
-	echo "[9/10] Installing Argo CD and registering the worker cluster..."; \
+	echo "[8/9] Installing Argo CD and registering the worker cluster..."; \
 	$(MAKE) --no-print-directory argo-register-worker; \
-	echo "[10/10] Provisioning the demo (Promises, teams, example requests)..."; \
+	echo "[9/9] Provisioning the demo (Promises, teams, example requests)..."; \
 	$(MAKE) --no-print-directory demo-setup; \
 	elapsed=$$(( $$(date +%s) - start )); \
 	echo ""; \
@@ -225,23 +223,6 @@ clusters: ## Create the platform + worker kind clusters (idempotent)
 		kind create cluster --name $(PLATFORM_CLUSTER) --image $(KIND_NODE_IMAGE) --config hack/kind/platform-config.yaml
 	@kind get clusters 2>/dev/null | grep -qx $(WORKER_CLUSTER) || \
 		kind create cluster --name $(WORKER_CLUSTER) --image $(KIND_NODE_IMAGE) --config hack/kind/worker-config.yaml
-
-.PHONY: cert-manager
-cert-manager: ## Install cert-manager on the platform cluster (required by the kratix chart's webhooks)
-	kubectl --context $(PLATFORM_CTX) apply -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
-	kubectl --context $(PLATFORM_CTX) wait --for=condition=available --timeout=180s \
-		-n cert-manager deployment/cert-manager deployment/cert-manager-cainjector deployment/cert-manager-webhook
-
-.PHONY: minio
-minio: ## Install the local (dev-only, ephemeral) MinIO state store on the platform cluster
-	kubectl --context $(PLATFORM_CTX) apply -f hack/kind/minio-install.yaml
-	kubectl --context $(PLATFORM_CTX) wait --for=condition=ready --timeout=120s -n kratix-platform-system pod -l run=minio
-	kubectl --context $(PLATFORM_CTX) wait --for=condition=complete --timeout=120s -n default job/minio-create-bucket
-
-.PHONY: kratix-platform
-kratix-platform: ## Install Kratix on the platform cluster (Helm chart: syntasso/kratix)
-	helm --kube-context $(PLATFORM_CTX) upgrade --install kratix kratix \
-		--repo $(KRATIX_HELM_REPO) -f hack/kratix/platform-values.yaml --wait --timeout 5m
 
 FLUX_INSTALL_URL := https://github.com/fluxcd/flux2/releases/download/$(FLUX_VERSION)/install.yaml
 FLUX_DEPLOYMENTS := deployment/source-controller deployment/kustomize-controller deployment/helm-controller
@@ -425,6 +406,11 @@ verify: ## Confirm `make up` came up healthy: cluster contexts respond, Kratix p
 	@echo "Checking cluster contexts..."; \
 	kubectl --context $(PLATFORM_CTX) get nodes >/dev/null || { echo "FAIL: platform context $(PLATFORM_CTX) isn't responding"; exit 1; }; \
 	kubectl --context $(WORKER_CTX) get nodes >/dev/null || { echo "FAIL: worker context $(WORKER_CTX) isn't responding"; exit 1; }; \
+	echo "Checking platform infra Kustomizations..."; \
+	for k in cert-manager kratix minio; do \
+		ready=$$(kubectl --context $(PLATFORM_CTX) get kustomization "$$k" -n flux-system -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null); \
+		if [ "$$ready" != "True" ]; then echo "FAIL: Kustomization $$k (flux-system) is not Ready"; exit 1; fi; \
+	done; \
 	echo "Checking Kratix pods..."; \
 	not_running=$$(kubectl --context $(PLATFORM_CTX) get pods -n kratix-platform-system --no-headers 2>/dev/null | grep -v -E 'Running|Completed' || true); \
 	if [ -n "$$not_running" ]; then echo "FAIL: pods not Running/Completed in kratix-platform-system:"; echo "$$not_running"; exit 1; fi; \
@@ -486,7 +472,7 @@ registry: registry-start registry-configure ## Ensure the local registry is runn
 registry-stop: ## Stop and remove the local registry container
 	@docker rm -f $(REGISTRY_NAME) >/dev/null 2>&1 || true
 
-##@ Platform infra (Flux/GitOps prototype)
+##@ Platform infra (Flux/GitOps)
 #
 # $(INFRA_DIR) is reconciled onto the platform cluster by the same Flux
 # `flux-platform` installs (pinned to $(FLUX_VERSION) - see that var's

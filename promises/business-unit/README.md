@@ -34,7 +34,7 @@ Both workflow stages carry `destinationSelectors: [{matchLabels: {environment: p
 (`promise.yaml`) so Capsule and every business unit's `Tenant` land on the **platform**
 cluster - not the worker - since that's where Capsule's own webhooks and the marketplace
 broker actually run. `platform-cluster` is registered with `strictMatchLabels: true`
-(`hack/kratix/platform-values.yaml`), so it only receives output that explicitly asks for it
+(`clusters/platform/kratix/kratix-release.yaml`), so it only receives output that explicitly asks for it
 this way.
 
 ## Why `owners` is empty
@@ -164,7 +164,7 @@ deployment kustomize-controller -n flux-system
 that Deployment's own identity).
 
 Capsule's webhooks need cert-manager, which this cluster already has
-(`clusters/platform/cert-manager-release.yaml`, Flux-managed) - no new prerequisite.
+(`clusters/platform/cert-manager/cert-manager-release.yaml`, Flux-managed) - no new prerequisite.
 
 ## Try it
 

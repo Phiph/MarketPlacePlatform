@@ -3,6 +3,14 @@
 # (clusters/platform/), bundled as an OCI artifact in the local registry by
 # `make infra-push`. `make infra-apply` applies this file, then patches the
 # OCIRepository's tag to whatever infra-push just pushed.
+#
+# clusters/platform/ has three layers (cert-manager, kratix, minio), each
+# its own Kustomization sourced from a different subfolder of the same
+# artifact, chained via `dependsOn` so Flux won't apply a layer until the
+# previous one is fully Ready - see
+# docs/superpowers/specs/2026-09-01-flux-platform-infra-design.md for why
+# the ordering matters (Kratix needs cert-manager's webhooks; MinIO needs
+# the Namespace/Secret Kratix's chart creates).
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
@@ -18,14 +26,48 @@ spec:
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: platform-infra
+  name: cert-manager
   namespace: flux-system
 spec:
   interval: 5m
   sourceRef:
     kind: OCIRepository
     name: platform-infra
-  path: "./"
+  path: "./cert-manager"
   prune: true
   wait: true
-  timeout: 3m
+  timeout: 5m
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kratix
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: cert-manager
+  interval: 5m
+  sourceRef:
+    kind: OCIRepository
+    name: platform-infra
+  path: "./kratix"
+  prune: true
+  wait: true
+  timeout: 5m
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: minio
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: kratix
+  interval: 5m
+  sourceRef:
+    kind: OCIRepository
+    name: platform-infra
+  path: "./minio"
+  prune: true
+  wait: true
+  timeout: 5m

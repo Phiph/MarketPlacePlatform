@@ -54,7 +54,7 @@ make up
 ```
 
 First run takes roughly **10-20 minutes** - mostly Docker image pulls and
-Helm install waits across two clusters - and prints a `[step/10]` line before
+Helm install waits across two clusters - and prints a `[step/9]` line before
 each stage so you can see where it is. Re-running `make up` afterward is fast
 since every step is idempotent and skips what already exists.
 
@@ -109,12 +109,12 @@ cmd.exe/PowerShell path. To run this on Windows:
 
 ## Platform infra (Flux/GitOps)
 
-[`clusters/platform/`](clusters/platform) is the platform cluster's own infra, declared
-as Flux objects (`HelmRepository`/`HelmRelease` for cert-manager, so far) instead of the
-`kubectl apply`/`helm upgrade --install` calls the Makefile used to run directly. It's
-reconciled by the same Flux `flux-platform` installs (see "How this works" below) - not a
-second instance, and not the same thing as the Flux `kratix-worker`/`kratix-platform-destination`
-use to deliver Promise workloads to Destinations.
+[`clusters/platform/`](clusters/platform) is the platform cluster's own infra - cert-manager,
+Kratix, and MinIO - declared as layered Flux objects instead of the `kubectl apply`/`helm
+upgrade --install` calls the Makefile used to run directly. It's reconciled by the same Flux
+`flux-platform` installs (see "How this works" below) - not a second instance, and not the
+same thing as the Flux `kratix-worker`/`kratix-platform-destination` use to deliver Promise
+workloads to Destinations.
 
 ```bash
 make infra   # push clusters/platform as an OCI artifact + point Flux at it
@@ -124,30 +124,29 @@ make infra   # push clusters/platform as an OCI artifact + point Flux at it
 rather than requiring a git remote, which keeps the loop local: edit a file under
 `clusters/platform/`, `make infra`, and Flux reconciles the change in place - no push to
 `origin` needed. `infra-apply` applies [`hack/kratix/platform-infra-source.yaml`](hack/kratix/platform-infra-source.yaml)
-(the `OCIRepository` + `Kustomization` pointing at it) and patches the tag to whatever was
-just pushed. Swapping the `OCIRepository` for a `GitRepository` against a real git remote
+(the `OCIRepository` + three `Kustomization`s pointing at it) and patches the tag to whatever
+was just pushed. Swapping the `OCIRepository` for a `GitRepository` against a real git remote
 later is a one-object change - `clusters/platform/`'s contents don't need to move.
 
-This is additive, not yet wired into `make up`: cert-manager is still installed
-imperatively by the `cert-manager` target before Flux exists on the platform cluster (Flux
-itself is installed later, by `kratix-platform-destination`'s `flux-platform` prerequisite),
-so `make infra` is something you run *after* `make up` to have Flux take over an
-already-running cert-manager. Folding this into `up` so a fresh cluster is GitOps-managed
-from the start would mean bootstrapping Flux before cert-manager instead of after - not
-done here yet.
+`make up` runs `infra` itself as part of bringing up a fresh cluster (see "How this works"
+below) - there's no imperative cert-manager/Kratix/MinIO install to hand off from anymore.
+`clusters/platform/` has three subfolders, each its own `Kustomization`, chained with
+`dependsOn` so Flux only moves on to the next layer once the previous one is fully `Ready`:
 
-**Running `make infra` against a cluster that still has the imperative cert-manager doesn't
-cleanly replace it** - the upstream release manifest and the Helm chart name their
-resources differently (`cert-manager-*` vs `cert-manager-cert-manager-*`), so Helm doesn't
-see a conflict and you end up with two full cert-manager installs (two sets of webhooks)
-running side by side. To hand off cleanly, remove the imperative one first - but *not* via
-`kubectl delete -f <the release manifest>`: that manifest also owns the `cert-manager`
-Namespace object, so deleting it deletes the whole namespace, including whatever Flux
-already put there. Delete the old Deployments/Services/webhook configs by name instead, or
-accept the brief gap and let the `HelmRelease`'s `install.createNamespace: true` recreate
-the namespace (`kubectl annotate helmrelease cert-manager -n flux-system
-reconcile.fluxcd.io/requestedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite` to force an
-immediate retry rather than waiting for the next interval).
+1. `cert-manager/` - the `jetstack` Helm repo + a `cert-manager` `HelmRelease` (required by
+   the Kratix chart's webhooks)
+2. `kratix/` - depends on `cert-manager` - the `syntasso` Helm repo + a `kratix`
+   `HelmRelease` (the same values the old `kratix-platform` Makefile target passed via
+   `-f hack/kratix/platform-values.yaml`, now inlined directly into the `HelmRelease`)
+3. `minio/` - depends on `kratix` - the dev-only MinIO manifest, which needs the
+   `kratix-platform-system` Namespace and `default/minio-credentials` Secret the Kratix
+   chart creates (Helm refuses to adopt resources it didn't create, so this really does have
+   to come after, not just conventionally)
+
+`make verify` checks all three `Kustomization`s report `Ready=True` as part of confirming the
+platform came up healthy.
+
+**Migrating an existing cluster:** a cluster created before this chain existed can't adopt it via `make infra` - Flux's Helm release naming (`<namespace>-<release>`, e.g. `default-kratix`) differs from the old imperative `helm upgrade --install kratix kratix`'s bare `kratix` release name, so Flux would try to install a second, colliding release rather than take over the first. Recreate the cluster instead: `make down && make up` (or `make restart`).
 
 ## Building a Promise
 
@@ -412,7 +411,7 @@ make status             # pod/destination health on both clusters
 make top                 # CPU/memory per pod on both clusters
 make logs-platform       # tail the Kratix controller
 make logs-flux-worker    # tail Flux on the worker cluster
-make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination)
+make logs-flux-platform  # tail Flux on the platform cluster (the platform-cluster Destination, and where the cert-manager/kratix/minio infra chain reconciles - check here first if make up fails during "Reconciling platform infra")
 make k9s-platform        # k9s on the platform cluster
 make k9s-worker          # k9s on the worker cluster
 make argo-ui              # port-forward the Argo CD UI to http://localhost:8080
@@ -434,41 +433,35 @@ described above), then `deps` (installs whatever's missing for your OS), then
    `containerdConfigPatches` block for the local registry)
 2. `registry-configure` - wires `kind-registry` into both clusters' containerd
    ([kind's documented local-registry pattern](https://kind.sigs.k8s.io/docs/user/local-registry/))
-3. `cert-manager` - the upstream release manifest (required by the Kratix chart's webhooks)
-4. `kratix-platform` - installs Kratix itself via its published Helm chart
-   (`helm install kratix syntasso/kratix`, repo `https://syntasso.github.io/helm-charts`),
-   configured (`hack/kratix/platform-values.yaml`) to point at MinIO (not running yet -
-   nothing needs it live until a Promise pipeline actually writes to it) and pre-register
-   both `worker-1` and `platform-cluster` as `Destination`s. This is also what creates the
-   `kratix-platform-system` namespace and the `default/minio-credentials` Secret (via
-   `additionalResources` in the values file) - the Helm chart is the one source of truth
-   for both, which is why `minio` (next) has to run after it, not before: Helm refuses to
-   adopt a namespace or Secret that already exists without its ownership metadata.
-5. `minio` - a small, vendored, dev-only MinIO manifest (`hack/kind/minio-install.yaml`,
-   copied from Kratix's own `config/samples/minio-install.yaml` since it's a handful of
-   lines, not something worth fetching from a mutable branch on every run) - deploys into
-   the namespace `kratix-platform` created, using the Secret it created
-6. `kratix-worker` - installs Flux on the worker cluster (`flux-worker`, pinned to
-   `FLUX_VERSION` - see the Makefile comment on that var for why not literal-latest), then
-   registers the worker cluster as a Destination via the companion
+3. `flux-platform` - installs Flux on the platform cluster (pinned to `FLUX_VERSION` - see the
+   Makefile comment on that var for why not literal-latest), ahead of everything it's about
+   to reconcile
+4. `infra` - pushes [`clusters/platform/`](clusters/platform) as an OCI artifact to the local
+   registry and points the just-installed Flux at it, then `make up` waits for the `minio`
+   `Kustomization` to report Ready. This is what actually installs cert-manager, Kratix, and
+   MinIO - see "Platform infra" above for the three-layer `dependsOn` chain. Kratix is
+   configured (inlined into `clusters/platform/kratix/kratix-release.yaml`) to point at MinIO
+   (not running yet - nothing needs it live until a Promise pipeline actually writes to it)
+   and pre-register both `worker-1` and `platform-cluster` as `Destination`s.
+5. `kratix-worker` - installs Flux on the worker cluster (`flux-worker`, pinned to
+   `FLUX_VERSION`), then registers the worker cluster as a Destination via the companion
    `syntasso/kratix-destination` chart (`installFlux=false`, since Flux is already there),
    pointed at the platform's MinIO over the kind docker network (the two clusters are
    separate Docker containers, so this uses the platform node's container IP, not a
    Kubernetes Service DNS name)
-7. `kratix-platform-destination` - same idea (`flux-platform` + the `kratix-destination`
-   chart with `installFlux=false`), this time on the platform cluster itself, pointed at
-   its own in-cluster MinIO Service (no docker-network IP needed) - this is what registers
-   `kind-platform` itself as the `platform-cluster` Destination
-8. `metrics-server` on both clusters
+6. `kratix-platform-destination` - same idea (`installFlux=false` `kratix-destination` chart;
+   `flux-platform` is already installed by step 3, so this is idempotent), this time on the
+   platform cluster itself, pointed at its own in-cluster MinIO Service (no docker-network IP
+   needed) - this is what registers `kind-platform` itself as the `platform-cluster`
+   Destination
+7. `metrics-server` on both clusters
 
 The `kratix-destination` chart is marked deprecated upstream (still published and
 functional, just not where Syntasso is investing further) - it's used here for the
 Destination-registration/Bucket/Kustomization wiring, which is far less bespoke code than
 reimplementing that by hand, but *not* for installing Flux itself (`installFlux=false`):
 Flux is installed explicitly by `flux-worker`/`flux-platform` so its version is under our
-control rather than whatever the chart last pinned. See the ["target folder as a Flux
-target"](#platform-infra-fluxgitops) section below for how the platform cluster's own
-infra (starting with cert-manager) is reconciled through that same Flux instance.
+control rather than whatever the chart last pinned.
 
 The `kratix` CLI (fetched to `bin/kratix`, git-ignored) is what scaffolds new
 Promises - `promise-build`/`promise-load`/`promise-demo` are generic over
