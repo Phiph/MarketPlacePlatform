@@ -1,21 +1,3 @@
-import kratix_sdk as ks
-import yaml
-
-
-# Naming source of truth: broker/internal/tenant.ProjectEnvironmentNamespace()
-# computes this identical string - the two can't share code across
-# languages, so both sides carry a comment pointing at the other. Same
-# convention promises/team/'s pipeline uses for its own Namespace().
-#
-# team is part of the name, not just project/environment: Namespaces are
-# cluster-scoped, but a Project's name is only unique within its own
-# team's namespace - two different teams can both create a project called
-# "checkout-service". Without team in the string, two teams picking the
-# same project+environment name would collide on one real Namespace, and
-# whichever Environment request reconciled second would silently overwrite
-# the first's marketplace.kratix.io/team label - handing that namespace's
-# RBAC to the wrong team. See tenant.ProjectEnvironmentNamespace()'s
-# comment for the full reasoning.
 def namespace_name(team: str, project: str, environment: str) -> str:
     return f"project-{team}-{project}-{environment}"
 
@@ -30,7 +12,31 @@ LABEL_PROJECT = "marketplace.kratix.io/project"
 LABEL_ENVIRONMENT = "marketplace.kratix.io/environment"
 
 
+# Only ever builds a Namespace - never a Tenant, same separation
+# promises/team's pipeline relies on (see that Promise's README,
+# "Provisioning order matters" in promises/business-unit/README.md) to
+# stay safe to ship declaratively via Flux: the referenced business
+# unit's Tenant is expected to already exist.
+def build_namespace(team: str, project: str, environment: str, business_unit: str) -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+            "name": namespace_name(team, project, environment),
+            "labels": {
+                "capsule.clastix.io/tenant": business_unit,
+                LABEL_TEAM: team,
+                LABEL_PROJECT: project,
+                LABEL_ENVIRONMENT: environment,
+            },
+        },
+    }
+
+
 def main():
+    import kratix_sdk as ks
+    import yaml
+
     sdk = ks.KratixSDK()
     resource = sdk.read_resource_input()
     environment = resource.get_name()
@@ -43,26 +49,8 @@ def main():
     team = resource.get_value("spec.team")
     business_unit = resource.get_value("spec.businessUnit")
 
-    ns = namespace_name(team, project, environment)
-
-    # Only ever writes a Namespace - never a Tenant, same separation
-    # promises/team's pipeline relies on (see that Promise's README,
-    # "Provisioning order matters" in promises/business-unit/README.md) to
-    # stay safe to ship declaratively via Flux: the referenced business
-    # unit's Tenant is expected to already exist.
-    namespace = {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {
-            "name": ns,
-            "labels": {
-                "capsule.clastix.io/tenant": business_unit,
-                LABEL_TEAM: team,
-                LABEL_PROJECT: project,
-                LABEL_ENVIRONMENT: environment,
-            },
-        },
-    }
+    namespace = build_namespace(team, project, environment, business_unit)
+    ns = namespace["metadata"]["name"]
     sdk.write_output("namespace.yaml", yaml.safe_dump(namespace).encode("utf-8"))
 
     status = ks.Status()
